@@ -1,5 +1,4 @@
 use vstd::prelude::*;
-use std::fmt::Debug;
 
 verus!{
     pub fn vec_remove_duplicates(input_vector: Vec<i32>) -> (output_vector: Vec<i32>) 
@@ -47,7 +46,7 @@ verus!{
                     0 <= j,
                     j <= current_output.len(),
                     current_output.len() == current_output_clone.len(),
-                    forall |k: int| current_output@.index(k) == current_output_clone@.index(k)
+                    forall |k: int| (0 <= k < current_output.len()) ==> current_output@.index(k) == current_output_clone@.index(k)
                 decreases
                     current_output.len() - j
             {

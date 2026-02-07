@@ -1,1 +1,1 @@
-pub mod vec_remove_duplicates;
+pub mod insertion_sort;

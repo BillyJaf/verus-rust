@@ -1,7 +1,6 @@
 use vstd::prelude::*;
 
-// include!("insertion_sort/insertion_sort_verus.rs");
-include!("swap_elements/swap_elements_once.rs");
+include!("insertion_sort/insertion_sort_verus.rs");
 
 verus!{
     fn main() {
@@ -10,7 +9,7 @@ verus!{
         // let correct_sorted_array = vec![1,2,3,4,5];
         // assert(sorted_array =~= correct_sorted_array)
 
-        
+
         // let mut original_array = vec![1,2,3,4];
         // swap_two_elements(&mut original_array, 0, 1);
         // let swapped_array = vec![2,1,3,4];

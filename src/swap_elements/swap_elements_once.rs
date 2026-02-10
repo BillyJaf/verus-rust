@@ -13,7 +13,7 @@ verus!{
         old_array.to_multiset() == new_array.to_multiset()
     }
 
-    pub fn swap_two_elements(array: &mut Vec<i32>, index_1: usize, index_2: usize)
+    pub fn swap_two_elements_ref(array: &mut Vec<i32>, index_1: usize, index_2: usize)
         requires
             index_1 < old(array).len(),
             index_2 < old(array).len(),
@@ -45,5 +45,45 @@ verus!{
         };
 
         assert(old(array)@.to_multiset() == array@.to_multiset());
+    }
+
+    pub fn swap_two_elements(array: Vec<i32>, index_1: usize, index_2: usize) -> (swapped_array: Vec<i32>)
+        requires
+            index_1 < array.len(),
+            index_2 < array.len(),
+        ensures
+            only_swapped_elements(array@, swapped_array@, index_1 as int, index_2 as int)
+    {   
+        let ghost old_array = array@;
+
+        let mut swapped_array = array.clone();
+
+        let temp_1 = swapped_array[index_1];
+        let temp_2 = swapped_array[index_2];
+        swapped_array[index_1] = temp_2;
+
+        assert(swapped_array@ == old_array.update(index_1 as int, temp_2));
+        assert(swapped_array@.to_multiset() == old_array.update(index_1 as int, temp_2).to_multiset());
+
+        assert(old_array.to_multiset().insert(temp_2).remove(old_array[index_1 as int]) == old_array.update(index_1 as int, temp_2).to_multiset()) by {
+            to_multiset_update(old_array, index_1 as int, temp_2)
+        };
+
+        swapped_array[index_2] = temp_1;
+
+        assert(swapped_array@ == old_array.update(index_1 as int, temp_2).update(index_2 as int, temp_1));
+
+        assert(old_array.update(index_1 as int, temp_2).update(index_2 as int, temp_1).to_multiset() == old_array.to_multiset().insert(temp_2).remove(temp_1).insert(temp_1).remove(temp_2)) by { 
+            to_multiset_update(old_array.update(index_1 as int, temp_2), index_2 as int, temp_1);
+            to_multiset_update(old_array, index_1 as int, temp_2)
+        };
+
+        assert(old_array.to_multiset() == old_array.to_multiset().insert(temp_2).remove(temp_1).insert(temp_1).remove(temp_2)) by {
+            old_array.to_multiset_ensures();
+        };
+
+        assert(old_array.to_multiset() == swapped_array@.to_multiset());
+
+        swapped_array
     }
 }

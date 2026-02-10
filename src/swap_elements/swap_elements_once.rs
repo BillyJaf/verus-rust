@@ -2,6 +2,9 @@ use vstd::prelude::*;
 use vstd::seq_lib::*;
 use vstd::multiset::*;
 
+include!("../permutation/permutation.rs");
+include!("../sorted/sorted.rs");
+
 verus!{
     pub open spec fn only_swapped_elements(old_array: Seq<i32>, new_array: Seq<i32>, index_1: int, index_2: int) -> bool
     {
@@ -55,6 +58,50 @@ verus!{
             only_swapped_elements(array@, swapped_array@, index_1 as int, index_2 as int)
     {   
         let ghost old_array = array@;
+
+        let mut swapped_array = array.clone();
+
+        let temp_1 = swapped_array[index_1];
+        let temp_2 = swapped_array[index_2];
+        swapped_array[index_1] = temp_2;
+
+        assert(swapped_array@ == old_array.update(index_1 as int, temp_2));
+        assert(swapped_array@.to_multiset() == old_array.update(index_1 as int, temp_2).to_multiset());
+
+        assert(old_array.to_multiset().insert(temp_2).remove(old_array[index_1 as int]) == old_array.update(index_1 as int, temp_2).to_multiset()) by {
+            to_multiset_update(old_array, index_1 as int, temp_2)
+        };
+
+        swapped_array[index_2] = temp_1;
+
+        assert(swapped_array@ == old_array.update(index_1 as int, temp_2).update(index_2 as int, temp_1));
+
+        assert(old_array.update(index_1 as int, temp_2).update(index_2 as int, temp_1).to_multiset() == old_array.to_multiset().insert(temp_2).remove(temp_1).insert(temp_1).remove(temp_2)) by { 
+            to_multiset_update(old_array.update(index_1 as int, temp_2), index_2 as int, temp_1);
+            to_multiset_update(old_array, index_1 as int, temp_2)
+        };
+
+        assert(old_array.to_multiset() == old_array.to_multiset().insert(temp_2).remove(temp_1).insert(temp_1).remove(temp_2)) by {
+            old_array.to_multiset_ensures();
+        };
+
+        assert(old_array.to_multiset() == swapped_array@.to_multiset());
+
+        swapped_array
+    }
+
+    pub fn swap_two_consecutive_elements_sorted(array: Vec<i32>, current_element_index: usize) -> (swapped_array: Vec<i32>)
+        requires
+            1 <= current_element_index < array.len(),
+            array[current_element_index as int - 1] < array[current_element_index as int],
+            is_sorted(array@.subrange(0,current_element_index as int)),
+        ensures
+            only_swapped_elements(array@, swapped_array@, current_element_index as int - 1, current_element_index as int),
+            is_sorted(swapped_array@.subrange(0,current_element_index as int - 1)),
+    {   
+        let ghost old_array = array@;
+        let index_1 = current_element_index - 1;
+        let index_2 = current_element_index;
 
         let mut swapped_array = array.clone();
 

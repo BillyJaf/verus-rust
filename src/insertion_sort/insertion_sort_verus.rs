@@ -34,29 +34,40 @@ verus!{
     //     }
     // }   
 
-    // fn inner_loop(input_array: &mut Vec<i32>, current_element: i32, current_element_index: usize)
-    //     requires
-    //         1 < old(input_array).len() <= (i32::MAX),
-    //         0 <= current_element_index < old(input_array).len(),
-    //         old(input_array)@.contains(current_element),
-    //     ensures
-    //         is_permutation(input_array@, old(input_array)@),
-    // {
-    //     if current_element_index == 0 {
-    //         return
-    //     }
+    fn inner_loop(mut input_array: Vec<i32>, current_element: i32, current_element_index: usize) -> (swapped_array: Vec<i32>)
+        requires
+            1 < input_array.len() <= (i32::MAX),
+            0 <= current_element_index < input_array.len(),
+            input_array@.contains(current_element),
+        ensures
+            is_permutation(input_array@, swapped_array@),
+    {
+        if current_element_index == 0 {
+            return input_array;
+        }
 
-    //     let mut i = current_element_index - 1;
+        let mut swapped_array = input_array.clone();
 
-    //     while i > 0 && input_array[(i as usize)] > current_element 
-    //         invariant
-    //             i < current_element_index < input_array.len()
-    //         decreases
-    //             i + 1
-    //     {
-    //         swap_two_elements(&mut input_array, i, i+1);
-    //         i -= 1;
-    //     }
+        let mut i = current_element_index - 1;
 
-    // }   
+        while i > 0 && input_array[i as usize] > current_element 
+            invariant
+                is_permutation(input_array@, swapped_array@),
+                0 <= i < current_element_index < swapped_array.len(),
+                swapped_array.len() == input_array.len(),
+                is_permutation(input_array@, swapped_array@),
+            decreases
+                i + 1
+        {
+            swapped_array = swap_two_elements(swapped_array, i, i+1);
+            i -= 1;
+        }
+
+        if i == 0 && swapped_array[i as usize] > current_element {
+            swapped_array = swap_two_elements(swapped_array, 0, 1);
+        }
+
+        swapped_array
+
+    }   
 }

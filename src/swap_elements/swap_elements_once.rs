@@ -9,7 +9,8 @@ verus!{
         new_array[index_1 as int] == old_array[index_2 as int] &&
         new_array[index_2 as int] == old_array[index_1 as int] &&
         (forall |k: int|
-            0 <= k && k < new_array.len() && k != index_1 && k != index_2 ==> new_array[k] == old_array[k])
+            0 <= k && k < new_array.len() && k != index_1 && k != index_2 ==> new_array[k] == old_array[k]) &&
+        old_array.to_multiset() == new_array.to_multiset()
     }
 
     pub fn swap_two_elements(array: &mut Vec<i32>, index_1: usize, index_2: usize)

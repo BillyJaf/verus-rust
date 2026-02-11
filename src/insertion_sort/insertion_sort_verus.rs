@@ -4,8 +4,6 @@ include!("../swap_elements/swap_elements_once.rs");
 
 verus!{
     pub fn insertion_sort(arr: &mut Vec<i32>)
-        requires
-            old(arr).len() <= i32::MAX,
         ensures
             is_sorted(arr@),
             is_permutation(arr@, old(arr)@),
@@ -21,7 +19,6 @@ verus!{
         while i < arr.len() 
             invariant
                 1 <= i <= arr.len(),
-                // is_sorted(arr@.subrange(0,i as int)),
                 is_sorted_indexed(arr@, 0, i as int),
                 is_permutation(arr@, old(arr)@),
                 arr.len() == old(arr).len()
@@ -33,8 +30,6 @@ verus!{
                 invariant
                     0 <= j <= i < arr.len(),
                     is_permutation(arr@, old(arr)@),
-                    //is_sorted(arr@.subrange(0,j as int)),
-                    // is_sorted(arr@.subrange(j as int, i as int + 1)),
                     is_sorted_indexed(arr@, 0, j as int),
                     is_sorted_indexed(arr@, j as int, i as int + 1),
                     forall |x: int, y: int|
@@ -43,12 +38,7 @@ verus!{
                 decreases
                     j
             {   
-                // let k = j - 1;
-                // (*arr).swap(j, k);
                 swap_two_elements_ref(arr, j, j-1);
-                // let temp = arr[j];
-                // arr[j] = arr[j - 1];
-                // arr[j - 1] = temp;
                 j -= 1;
             }
             i += 1;

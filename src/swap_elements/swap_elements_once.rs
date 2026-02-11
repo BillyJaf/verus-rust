@@ -93,11 +93,12 @@ verus!{
     pub fn swap_two_consecutive_elements_sorted(array: Vec<i32>, current_element_index: usize) -> (swapped_array: Vec<i32>)
         requires
             1 <= current_element_index < array.len(),
-            array[current_element_index as int - 1] < array[current_element_index as int],
+            array[current_element_index as int - 1] > array[current_element_index as int],
             is_sorted(array@.subrange(0,current_element_index as int)),
         ensures
             only_swapped_elements(array@, swapped_array@, current_element_index as int - 1, current_element_index as int),
             is_sorted(swapped_array@.subrange(0,current_element_index as int - 1)),
+            is_sorted(swapped_array@.subrange(current_element_index as int - 1,current_element_index as int + 1)),
     {   
         let ghost old_array = array@;
         let index_1 = current_element_index - 1;
@@ -118,6 +119,8 @@ verus!{
 
         swapped_array[index_2] = temp_1;
 
+        // Multiset Proofs:
+
         assert(swapped_array@ == old_array.update(index_1 as int, temp_2).update(index_2 as int, temp_1));
 
         assert(old_array.update(index_1 as int, temp_2).update(index_2 as int, temp_1).to_multiset() == old_array.to_multiset().insert(temp_2).remove(temp_1).insert(temp_1).remove(temp_2)) by { 
@@ -130,6 +133,16 @@ verus!{
         };
 
         assert(old_array.to_multiset() == swapped_array@.to_multiset());
+
+
+
+
+        // Sorting Proofs:
+        assert(is_sorted(swapped_array@.subrange(0,current_element_index as int - 1))) by {
+            assert(forall |i: int| 0 <= i < current_element_index - 1 ==> #[trigger] old_array.index(i) == swapped_array@.index(i));
+            assert(old_array.subrange(0,current_element_index as int - 1) == swapped_array@.subrange(0,current_element_index as int - 1));
+            assert(is_sorted(old_array.subrange(0,current_element_index as int - 1)));
+        };
 
         swapped_array
     }

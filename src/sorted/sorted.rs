@@ -13,6 +13,14 @@ verus!{
         else { is_sorted_recursive(array, i, j - 1) }
     }
 
+    proof fn is_sorted_subarray(array: Seq<i32>, i: int, j: int)
+        requires
+            is_sorted(array),
+            0 <= i <= j <= array.len(),
+        ensures
+            is_sorted(array.subrange(i,j))
+    {}
+
     pub open spec fn is_sorted(array: Seq<i32>) -> bool
     {   
         if array.len() <= 1 {

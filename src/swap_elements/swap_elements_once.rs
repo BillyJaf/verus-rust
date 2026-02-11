@@ -99,6 +99,7 @@ verus!{
             only_swapped_elements(array@, swapped_array@, current_element_index as int - 1, current_element_index as int),
             is_sorted(swapped_array@.subrange(0,current_element_index as int - 1)),
             is_sorted(swapped_array@.subrange(current_element_index as int - 1,current_element_index as int + 1)),
+            swapped_array[current_element_index as int - 1] < swapped_array[current_element_index as int],
     {   
         let ghost old_array = array@;
         let index_1 = current_element_index - 1;
@@ -120,7 +121,6 @@ verus!{
         swapped_array[index_2] = temp_1;
 
         // Multiset Proofs:
-
         assert(swapped_array@ == old_array.update(index_1 as int, temp_2).update(index_2 as int, temp_1));
 
         assert(old_array.update(index_1 as int, temp_2).update(index_2 as int, temp_1).to_multiset() == old_array.to_multiset().insert(temp_2).remove(temp_1).insert(temp_1).remove(temp_2)) by { 
@@ -143,6 +143,9 @@ verus!{
             assert(old_array.subrange(0,current_element_index as int - 1) == swapped_array@.subrange(0,current_element_index as int - 1));
             assert(is_sorted(old_array.subrange(0,current_element_index as int - 1)));
         };
+
+        // assert(old_array.index(current_element_index as int - 1) > old_array.index(current_element_index as int));
+        // assert(swapped_array[current_element_index as int - 1] < swapped_array[current_element_index as int]);
 
         swapped_array
     }

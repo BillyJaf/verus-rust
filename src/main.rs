@@ -1,6 +1,9 @@
 use vstd::prelude::*;
 
-include!("insertion_sort/insertion_sort_verus.rs");
+mod insertion_sort;
+mod swap_elements;
+mod sorted;
+mod permutation;
 
 verus!{
     fn main() {

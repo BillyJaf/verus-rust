@@ -99,13 +99,13 @@ verus!{
     //     merged_array
     // }
 
-    pub fn zip(left: &[i32], right: &[i32]) -> (merged_array: Vec<i32>) 
+    pub fn merge(left: &[i32], right: &[i32]) -> (merged_array: Vec<i32>) 
         requires
             left.len() + right.len() <= usize::MAX,
             is_sorted(left@),
             is_sorted(right@)
         ensures
-            // is_sorted(merged_array@),
+            is_sorted(merged_array@),
             is_permutation(merged_array@, left@.add(right@)),
             left.len() + right.len() == merged_array.len()
     {
@@ -133,24 +133,16 @@ verus!{
                 merged_array@.to_multiset() =~= left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int)).to_multiset(),
                 is_sorted(left@),
                 is_sorted(right@),
-                // is_sorted(merged_array@.subrange(0, left_pointer + right_pointer)),
-                // added_element_is_largest_seen_so_far(left@, left_pointer as int, right@, right_pointer as int),
+                is_sorted(merged_array@),
+                added_element_is_largest_seen_so_far(merged_array@, left@, left_pointer as int, right@, right_pointer as int),
             decreases
                 left.len() - left_pointer + right.len() - right_pointer
         {   
             let ghost old_merged_array = merged_array@;
 
             if left[left_pointer] <= right[right_pointer] {
-
-                // assert(is_sorted(merged_array@.subrange(0, left_pointer + right_pointer)));
-                // assert(forall |i: int| 0 <= i < merged_array.len() ==> left[left_pointer as int] >= merged_array[i]);
-                // assert(forall |i: int| 0 <= i < right_pointer ==> left[left_pointer as int] >= right[i]);
-                // assert(added_element_is_largest_seen_so_far(left@, left_pointer as int, right@, right_pointer as int));
-
                 merged_array.push(left[left_pointer]);
                 left_pointer += 1;
-
-                // assert(is_sorted(merged_array@.subrange(0, left_pointer + right_pointer - 1)));
 
                 let ghost added_element = merged_array@.last();
 
@@ -218,92 +210,105 @@ verus!{
             }
         }
 
-        while left_pointer < left.len() 
-            invariant
-                0 <= left_pointer <= left.len(),
-                merged_array.len() == left_pointer + right_pointer,
-                merged_array@.to_multiset() =~= left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int)).to_multiset()  
-            decreases
-                left.len() - left_pointer
-        {
-            let ghost old_merged_array = merged_array@;
+        if right_pointer == right.len() {
+            while left_pointer < left.len() 
+                invariant
+                    0 <= left_pointer <= left.len(),
+                    0 <= right_pointer <= right.len(),
+                    merged_array.len() == left_pointer + right_pointer,
+                    merged_array@.to_multiset() =~= left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int)).to_multiset(),
+                    is_sorted(left@),
+                    is_sorted(right@),
+                    is_sorted(merged_array@),
+                    added_element_is_largest_seen_so_far_left(merged_array@, left@, left_pointer as int),
+                decreases
+                    left.len() - left_pointer
+            {
+                let ghost old_merged_array = merged_array@;
 
-            merged_array.push(left[left_pointer]);
-            left_pointer += 1;
+                merged_array.push(left[left_pointer]);
+                left_pointer += 1;
 
-            let ghost added_element = merged_array@.last();
+                let ghost added_element = merged_array@.last();
 
-            assert(merged_array@.drop_last() == old_merged_array);
-            assert(merged_array@ == old_merged_array.push(added_element));
-            assert(merged_array@.to_multiset() == old_merged_array.push(added_element).to_multiset());
-            assert(old_merged_array.push(added_element).to_multiset() == old_merged_array.to_multiset().insert(added_element)) by {
-                old_merged_array.to_multiset_ensures()
-            };
-            assert(merged_array@.to_multiset() == old_merged_array.to_multiset().insert(added_element));
+                assert(merged_array@.drop_last() == old_merged_array);
+                assert(merged_array@ == old_merged_array.push(added_element));
+                assert(merged_array@.to_multiset() == old_merged_array.push(added_element).to_multiset());
+                assert(old_merged_array.push(added_element).to_multiset() == old_merged_array.to_multiset().insert(added_element)) by {
+                    old_merged_array.to_multiset_ensures()
+                };
+                assert(merged_array@.to_multiset() == old_merged_array.to_multiset().insert(added_element));
 
-            assert(old_merged_array.to_multiset() =~= left@.subrange(0,left_pointer as int - 1).add(right@.subrange(0,right_pointer as int)).to_multiset());
-            assert(merged_array@.to_multiset() == left@.subrange(0,left_pointer as int - 1).add(right@.subrange(0,right_pointer as int)).to_multiset().insert(added_element));
+                assert(old_merged_array.to_multiset() =~= left@.subrange(0,left_pointer as int - 1).add(right@.subrange(0,right_pointer as int)).to_multiset());
+                assert(merged_array@.to_multiset() == left@.subrange(0,left_pointer as int - 1).add(right@.subrange(0,right_pointer as int)).to_multiset().insert(added_element));
 
-            assert(added_element == left[left_pointer as int - 1]);
-            assert(merged_array@.to_multiset() == left@.subrange(0,left_pointer as int - 1).add(right@.subrange(0,right_pointer as int)).to_multiset().insert(added_element));
+                assert(added_element == left[left_pointer as int - 1]);
+                assert(merged_array@.to_multiset() == left@.subrange(0,left_pointer as int - 1).add(right@.subrange(0,right_pointer as int)).to_multiset().insert(added_element));
 
-            assert(left@.subrange(0,left_pointer as int - 1).add(right@.subrange(0,right_pointer as int)).to_multiset().insert(added_element) == left@.subrange(0,left_pointer as int - 1).add(right@.subrange(0,right_pointer as int)).push(added_element).to_multiset()) by {
-                left@.subrange(0,left_pointer as int - 1).add(right@.subrange(0,right_pointer as int)).to_multiset_ensures();
-            };
+                assert(left@.subrange(0,left_pointer as int - 1).add(right@.subrange(0,right_pointer as int)).to_multiset().insert(added_element) == left@.subrange(0,left_pointer as int - 1).add(right@.subrange(0,right_pointer as int)).push(added_element).to_multiset()) by {
+                    left@.subrange(0,left_pointer as int - 1).add(right@.subrange(0,right_pointer as int)).to_multiset_ensures();
+                };
 
-            assert(left@.subrange(0,left_pointer as int - 1).add(right@.subrange(0,right_pointer as int)).to_multiset().insert(added_element) =~= left@.subrange(0,left_pointer as int - 1).to_multiset().insert(added_element).add(right@.subrange(0,right_pointer as int).to_multiset())) by {
-                concat_to_multiset(left@.subrange(0,left_pointer as int - 1), right@.subrange(0,right_pointer as int));
-            };
+                assert(left@.subrange(0,left_pointer as int - 1).add(right@.subrange(0,right_pointer as int)).to_multiset().insert(added_element) =~= left@.subrange(0,left_pointer as int - 1).to_multiset().insert(added_element).add(right@.subrange(0,right_pointer as int).to_multiset())) by {
+                    concat_to_multiset(left@.subrange(0,left_pointer as int - 1), right@.subrange(0,right_pointer as int));
+                };
 
-            assert(left@.subrange(0,left_pointer as int - 1).to_multiset().insert(added_element).add(right@.subrange(0,right_pointer as int).to_multiset()) =~= left@.subrange(0,left_pointer as int - 1).push(added_element).to_multiset().add(right@.subrange(0,right_pointer as int).to_multiset())) by {
-                left@.subrange(0,left_pointer as int - 1).to_multiset_ensures();
-            };
+                assert(left@.subrange(0,left_pointer as int - 1).to_multiset().insert(added_element).add(right@.subrange(0,right_pointer as int).to_multiset()) =~= left@.subrange(0,left_pointer as int - 1).push(added_element).to_multiset().add(right@.subrange(0,right_pointer as int).to_multiset())) by {
+                    left@.subrange(0,left_pointer as int - 1).to_multiset_ensures();
+                };
 
-            assert(left@.subrange(0,left_pointer as int) =~= left@.subrange(0,left_pointer as int - 1).push(added_element));
-            assert(left@.subrange(0,left_pointer as int - 1).push(added_element).to_multiset().add(right@.subrange(0,right_pointer as int).to_multiset()) =~= left@.subrange(0,left_pointer as int).to_multiset().add(right@.subrange(0,right_pointer as int).to_multiset()));
+                assert(left@.subrange(0,left_pointer as int) =~= left@.subrange(0,left_pointer as int - 1).push(added_element));
+                assert(left@.subrange(0,left_pointer as int - 1).push(added_element).to_multiset().add(right@.subrange(0,right_pointer as int).to_multiset()) =~= left@.subrange(0,left_pointer as int).to_multiset().add(right@.subrange(0,right_pointer as int).to_multiset()));
 
-            assert(left@.subrange(0,left_pointer as int).to_multiset().add(right@.subrange(0,right_pointer as int).to_multiset()) =~= left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int)).to_multiset()) by {
-                concat_to_multiset(left@.subrange(0,left_pointer as int), right@.subrange(0,right_pointer as int));
-            };
-        }
+                assert(left@.subrange(0,left_pointer as int).to_multiset().add(right@.subrange(0,right_pointer as int).to_multiset()) =~= left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int)).to_multiset()) by {
+                    concat_to_multiset(left@.subrange(0,left_pointer as int), right@.subrange(0,right_pointer as int));
+                };
+            }
+        } else {
 
-        while right_pointer < right.len() 
-            invariant
-                0 <= right_pointer <= right.len(),
-                merged_array.len() == left_pointer + right_pointer,
-                merged_array@.to_multiset() =~= left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int)).to_multiset()  
-            decreases
-                right.len() - right_pointer
-        {
-            let ghost old_merged_array = merged_array@;
+            while right_pointer < right.len() 
+                invariant
+                    0 <= left_pointer <= left.len(),
+                    0 <= right_pointer <= right.len(),
+                    merged_array.len() == left_pointer + right_pointer,
+                    merged_array@.to_multiset() =~= left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int)).to_multiset(),
+                    is_sorted(left@),
+                    is_sorted(right@),
+                    is_sorted(merged_array@),
+                    added_element_is_largest_seen_so_far_right(merged_array@, right@, right_pointer as int),
+                decreases
+                    right.len() - right_pointer
+            {
+                let ghost old_merged_array = merged_array@;
 
-            merged_array.push(right[right_pointer]);
-            right_pointer += 1;
+                merged_array.push(right[right_pointer]);
+                right_pointer += 1;
 
-            let ghost added_element = merged_array@.last();
+                let ghost added_element = merged_array@.last();
 
-            assert(merged_array@.drop_last() == old_merged_array);
-            assert(merged_array@ == old_merged_array.push(added_element));
-            assert(merged_array@.to_multiset() == old_merged_array.push(added_element).to_multiset());
-            assert(old_merged_array.push(added_element).to_multiset() == old_merged_array.to_multiset().insert(added_element)) by {
-                old_merged_array.to_multiset_ensures()
-            };
-            assert(merged_array@.to_multiset() == old_merged_array.to_multiset().insert(added_element));
+                assert(merged_array@.drop_last() == old_merged_array);
+                assert(merged_array@ == old_merged_array.push(added_element));
+                assert(merged_array@.to_multiset() == old_merged_array.push(added_element).to_multiset());
+                assert(old_merged_array.push(added_element).to_multiset() == old_merged_array.to_multiset().insert(added_element)) by {
+                    old_merged_array.to_multiset_ensures()
+                };
+                assert(merged_array@.to_multiset() == old_merged_array.to_multiset().insert(added_element));
 
-            assert(old_merged_array.to_multiset() =~= left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int - 1)).to_multiset());
-            assert(merged_array@.to_multiset() == left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int - 1)).to_multiset().insert(added_element));
+                assert(old_merged_array.to_multiset() =~= left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int - 1)).to_multiset());
+                assert(merged_array@.to_multiset() == left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int - 1)).to_multiset().insert(added_element));
 
-            assert(added_element == right[right_pointer as int - 1]);
-            assert(merged_array@.to_multiset() == left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int - 1)).to_multiset().insert(added_element));
+                assert(added_element == right[right_pointer as int - 1]);
+                assert(merged_array@.to_multiset() == left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int - 1)).to_multiset().insert(added_element));
 
-            assert(left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int - 1)).to_multiset().insert(added_element) == left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int - 1)).push(added_element).to_multiset()) by {
-                left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int - 1)).to_multiset_ensures();
-            };
+                assert(left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int - 1)).to_multiset().insert(added_element) == left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int - 1)).push(added_element).to_multiset()) by {
+                    left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int - 1)).to_multiset_ensures();
+                };
 
-            assert(left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int - 1)).push(added_element) == left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int)));
-            assert(left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int - 1)).push(added_element).to_multiset() == left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int)).to_multiset());
+                assert(left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int - 1)).push(added_element) == left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int)));
+                assert(left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int - 1)).push(added_element).to_multiset() == left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int)).to_multiset());
 
-            assert(merged_array@.to_multiset() =~= left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int)).to_multiset());
+                assert(merged_array@.to_multiset() =~= left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int)).to_multiset());
+            }
         }
 
         assert(merged_array@.to_multiset() =~= left@.subrange(0,left_pointer as int).add(right@.subrange(0,right_pointer as int)).to_multiset());
@@ -358,10 +363,19 @@ verus!{
         }
     }
 
-    // pub open spec fn added_element_is_largest_seen_so_far(left: Seq<i32>, left_pointer: int, right: Seq<i32>, right_pointer: int) -> bool
-    // {
-    //     ((left_pointer < left.len() && right_pointer < right.len() && left[left_pointer] <= right[right_pointer]) ==> forall |i: int| 0 <= i < right_pointer ==> left[left_pointer] >= right[i]) ||
-    //     ((left_pointer < left.len() && right_pointer < right.len() && left[left_pointer] > right[right_pointer]) ==> forall |i: int| 0 <= i < left_pointer ==> right[right_pointer] >= left[i])
-    // }
+    pub open spec fn added_element_is_largest_seen_so_far(merged_array: Seq<i32>, left: Seq<i32>, left_pointer: int, right: Seq<i32>, right_pointer: int) -> bool
+    {
+        merged_array.len() > 0 ==> ((left_pointer < left.len() ==> merged_array.last() <= left[left_pointer]) && (right_pointer < right.len() ==> merged_array.last() <= right[right_pointer]))
+    }
+
+    pub open spec fn added_element_is_largest_seen_so_far_left(merged_array: Seq<i32>, left: Seq<i32>, left_pointer: int) -> bool
+    {
+        merged_array.len() > 0 ==> (left_pointer < left.len() ==> merged_array.last() <= left[left_pointer])
+    }
+
+    pub open spec fn added_element_is_largest_seen_so_far_right(merged_array: Seq<i32>, right: Seq<i32>, right_pointer: int) -> bool
+    {
+        merged_array.len() > 0 ==> (right_pointer < right.len() ==> merged_array.last() <= right[right_pointer])
+    }
 
 }

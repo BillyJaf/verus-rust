@@ -6,98 +6,82 @@ use crate::sorted::sorted::{is_sorted, is_sorted_range};
 use crate::swap_elements::swap_elements_once::swap_two_elements;
 
 verus!{
-    // pub fn merge_sort(arr: &mut [i32])
-    //     // ensures
-    //     //     is_sorted(arr@),
-    //     //     is_permutation(arr@, old(arr)@),
-    //     //     arr.len() == old(arr).len()
-    // {
+    pub fn merge_sort(arr: &mut Vec<i32>)
+        requires
+            old(arr).len() <= usize::MAX,
+        ensures
+            is_sorted(arr@),
+            is_permutation(arr@, old(arr)@),
+            arr.len() == old(arr).len()
+        decreases
+            old(arr).len()
+    {
+        let mid_point = arr.len() / 2;
+        if mid_point == 0 {
+            return;
+        }
 
-    // }
+        let mut left = Vec::with_capacity(mid_point);
+        let mut right = Vec::with_capacity(arr.len() - mid_point);
 
-    // fn merge(left: &[i32], right: &[i32]) -> (merged_array: Vec<i32>)
-    //     requires
-    //         left.len() + right.len() <= usize::MAX,
-    //         is_sorted(left@),
-    //         is_sorted(right@)
-    //     ensures
-    //         is_sorted(merged_array@),
-    //         // is_permutation(left@ + right@, merged_array@),
-    //         // left.len() + right.len() == merged_array.len()
-    // {   
-    //     let mut merged_array = Vec::with_capacity(left.len() + right.len());
+        let mut i = 0;
+        while i < mid_point 
+            invariant
+                0 <= i <= mid_point <= arr.len(),
+                left@ == arr@.subrange(0,i as int),
+            decreases
+                mid_point - i
+        {
+            left.push(arr[i]);
+            i += 1;
+        }
 
-    //     let mut left_pointer = 0;
-    //     let mut right_pointer = 0;
+        while i < arr.len() 
+            invariant
+                mid_point <= i <= arr.len(),
+                right@ == arr@.subrange(mid_point as int,i as int),
+            decreases
+                arr.len() - i
+        {
+            right.push(arr[i]);
+            i += 1;
+        }
 
-    //     // assert(merged_array@.to_multiset() =~= left@.subrange(0, left_pointer as int).to_multiset().add(right@.subrange(0, 0 as int).to_multiset()));
+        merge_sort(&mut left);
+        merge_sort(&mut right);
 
-    //     while left_pointer < left.len() && right_pointer < right.len()
-    //         invariant
-    //             0 <= left_pointer <= left.len(),
-    //             0 <= right_pointer <= right.len(),
-    //             is_sorted(left@),
-    //             is_sorted(right@),
-    //             is_sorted(merged_array@),
-    //             merged_array@.to_multiset() =~= left@.subrange(0, left_pointer as int).to_multiset().add(right@.subrange(0, right_pointer as int).to_multiset()),
-    //         decreases
-    //             left.len() - left_pointer + right.len() - right_pointer
-    //     {   
-    //         if left[left_pointer] <= right[right_pointer] {
-    //             assume(forall |i: int|
-    //                 0 <= i < merged_array.len() ==> merged_array@.index(i) <= left[left_pointer as int]);
-    //             append_to_sorted(&mut merged_array, left[left_pointer]);
-    //             left_pointer += 1;
-    //         } else {
-    //             assume(forall |i: int|
-    //                 0 <= i < merged_array.len() ==> merged_array@.index(i) <= right[right_pointer as int]);
-    //             append_to_sorted(&mut merged_array, right[right_pointer]);
-    //             right_pointer += 1;
-    //         }
-    //     }
+        let sorted = merge(&left, &right);
 
-    //     // while left_pointer < left.len() && right_pointer < right.len() 
-    //     //     invariant
-    //     //         0 <= left_pointer <= left.len(),
-    //     //         0 <= right_pointer <= right.len(),
-    //     //         is_sorted(merged_array@)
-    //     //     decreases
-    //     //         right.len() - right_pointer + left.len() - left_pointer
-    //     // {   
+        assert(sorted@.to_multiset() =~= left@.add(right@).to_multiset());
+        assert(arr@.subrange(0,mid_point as int).to_multiset() =~= left@.to_multiset());
+        assert(arr@.subrange(mid_point as int, arr.len() as int).to_multiset() =~= right@.to_multiset());
+        assert(arr@.subrange(0,mid_point as int).to_multiset().add(arr@.subrange(mid_point as int, arr.len() as int).to_multiset()) =~= left@.to_multiset().add(right@.to_multiset()));
+        assert(arr@.subrange(0,mid_point as int).add(arr@.subrange(mid_point as int, arr.len() as int)).to_multiset() =~= left@.add(right@).to_multiset()) by {
+            concat_to_multiset(arr@.subrange(0,mid_point as int), arr@.subrange(mid_point as int, arr.len() as int));
+            concat_to_multiset(left@, right@);
+        };
 
-    //     //     if left[left_pointer] <= right[right_pointer] {
-    //     //         merged_array.push(left[left_pointer]);
-    //     //         left_pointer += 1;
-    //     //     } else {
-    //     //         merged_array.push(right[right_pointer]);
-    //     //         right_pointer += 1;
-    //     //     }
-    //     // }
+        assert(arr@ =~= arr@.subrange(0,mid_point as int).add(arr@.subrange(mid_point as int, arr.len() as int)));
+        assert(arr@.to_multiset() =~= arr@.subrange(0,mid_point as int).add(arr@.subrange(mid_point as int, arr.len() as int)).to_multiset());
+        assert(arr@.to_multiset() =~= left@.add(right@).to_multiset());
 
-    //     // while left_pointer < left.len() 
-    //     //     ensures
-    //     //         0 <= left_pointer <= left.len(),
-    //     //         is_sorted(merged_array@)
-    //     //     decreases
-    //     //         left.len() - left_pointer
-    //     // {
-    //     //     merged_array.push(left[left_pointer]);
-    //     //     left_pointer += 1;
-    //     // }
+        
+        let mut i = 0;
+        while i < sorted.len() 
+            invariant
+                sorted.len() == arr.len(),
+                0 <= i <= sorted.len(),
+                forall |j: int| 0 <= j < i ==> sorted[j] == arr[j],
+            decreases
+                sorted.len() - i
+        {
+            arr[i] = sorted[i];
+            i += 1;
+        }
 
-    //     // while right_pointer < right.len() 
-    //     //     ensures
-    //     //         0 <= right_pointer <= right.len(),
-    //     //         is_sorted(merged_array@)
-    //     //     decreases
-    //     //         right.len() - right_pointer
-    //     // {
-    //     //     merged_array.push(right[right_pointer]);
-    //     //     right_pointer += 1;
-    //     // }
-
-    //     merged_array
-    // }
+        assert(arr@ == sorted@);
+        assert(arr@.to_multiset() == sorted@.to_multiset());
+    }
 
     pub fn merge(left: &[i32], right: &[i32]) -> (merged_array: Vec<i32>) 
         requires

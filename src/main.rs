@@ -5,6 +5,7 @@ mod merge_sort;
 mod swap_elements;
 mod sorted;
 mod permutation;
+mod vec;
 
 verus!{
     fn main() {

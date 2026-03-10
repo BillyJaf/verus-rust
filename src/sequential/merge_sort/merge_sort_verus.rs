@@ -1,12 +1,11 @@
 use vstd::prelude::*;
 use vstd::multiset::*;
 
-use crate::permutation::permutation::is_permutation;
-use crate::sorted::sorted::{is_sorted, is_sorted_range};
-use crate::swap_elements::swap_elements_once::swap_two_elements;
-use crate::vec::clone_vec_range::clone_vec_range;
-use crate::vec::copy_vec::copy_vec;
-use crate::vec::split_vec::split_vec;
+use crate::sequential::{
+    permutation::permutation::is_permutation,
+    sorted::sorted::is_sorted,
+    vec::{copy_vec::copy_vec, split_vec::split_vec}
+};
 
 verus!{
     pub fn merge_sort(arr: &mut Vec<i32>)
@@ -197,16 +196,18 @@ verus!{
 
             add_multisets_count(seq1, prefix, element);
 
+            assert(seq1.add(prefix).to_multiset().count(element) == seq1.to_multiset().count(element) + prefix.to_multiset().count(element));
+            assert(seq1.add(prefix).to_multiset().insert(last).count(element) == seq1.to_multiset().count(element) + prefix.to_multiset().insert(last).count(element));
+
+            assert(seq1.add(prefix).push(last).to_multiset().count(element) == seq1.to_multiset().count(element) + prefix.push(last).to_multiset().count(element)) by {
+                seq1.add(prefix).to_multiset_ensures();
+                prefix.to_multiset_ensures();
+            };
+
             assert(seq2 == prefix.push(last));
             assert(seq1.add(seq2) == seq1.add(prefix).push(last));
 
-            assert(seq1.add(prefix).push(last).to_multiset() == seq1.add(prefix).to_multiset().insert(last)) by {
-                seq1.add(prefix).to_multiset_ensures();
-            };
-
-            assert(seq2.to_multiset() == prefix.to_multiset().insert(last)) by {
-                prefix.to_multiset_ensures();
-            };
+            assert(seq1.add(seq2).to_multiset().count(element) == seq1.to_multiset().count(element) + seq2.to_multiset().count(element));
         }
     }
 

@@ -1,8 +1,10 @@
 use vstd::prelude::*;
 
-use crate::permutation::permutation::is_permutation;
-use crate::sorted::sorted::{is_sorted, is_sorted_range};
-use crate::swap_elements::swap_elements_once::swap_two_elements;
+use crate::sequential::{
+    permutation::permutation::is_permutation, 
+    sorted::sorted::{is_sorted, is_sorted_range}, 
+    swap_elements::swap_elements_once::swap_two_elements
+};
 
 verus!{
     pub fn insertion_sort(arr: &mut [i32])

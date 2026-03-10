@@ -2,8 +2,6 @@ use vstd::prelude::*;
 use vstd::seq_lib::*;
 use vstd::multiset::*;
 
-use crate::sorted::sorted::is_sorted;
-
 verus!{
     pub open spec fn only_swapped_elements(old_array: Seq<i32>, new_array: Seq<i32>, index_1: int, index_2: int) -> bool
     {

@@ -1,7 +1,7 @@
 use vstd::prelude::*;
 use vstd::multiset::*;
 
-use crate::sequential::{
+use crate::sequential::utils::{
     permutation::permutation::is_permutation,
     sorted::sorted::is_sorted,
     vec::{copy_vec::copy_vec, split_vec::split_vec}

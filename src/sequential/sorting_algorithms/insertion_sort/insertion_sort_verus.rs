@@ -1,6 +1,6 @@
 use vstd::prelude::*;
 
-use crate::sequential::{
+use crate::sequential::utils::{
     permutation::permutation::is_permutation, 
     sorted::sorted::{is_sorted, is_sorted_range}, 
     swap_elements::swap_elements_once::swap_two_elements

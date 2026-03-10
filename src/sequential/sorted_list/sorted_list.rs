@@ -57,6 +57,7 @@ impl<T: Eq + PartialEq + Ord + PartialOrd> SortedList<T> {
                 rp = mid;
             } else {
                 self.list.remove(mid);
+                break;
             }
         }
     }

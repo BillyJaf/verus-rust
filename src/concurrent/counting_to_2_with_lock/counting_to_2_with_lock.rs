@@ -132,6 +132,7 @@ impl Global {
             points_to@.id() == self.cell.id(), 
             points_to@.is_init(),
             points_to@.value().ghost_token@.instance_id() == self.instance@.id(),
+            self.wf(),
     {
         loop
             invariant self.wf(),
@@ -155,6 +156,8 @@ impl Global {
             points_to@.is_init(),
             points_to@.value().ghost_token@.instance_id() == self.instance@.id(),
             points_to@.value().ghost_token@.value() == points_to@.value().val as int,
+        ensures
+            self.wf()
     {
         atomic_with_ghost!(&self.atomic => store(false);
             ghost points_to_inv => {
@@ -177,7 +180,7 @@ fn main() {
         val: 0,
         ghost_token: Tracked(counter_token),
     };
-    let global = Global::new(cwp, Tracked(instance));
+    let global = Global::new(cwp, Tracked(instance.clone()));
     let global_arc = Arc::new(global);
 
     // Spawn threads
@@ -193,18 +196,24 @@ fn main() {
 
                 let mut perm = global_arc_thread1.acquire_lock();
 
+                proof {
+                    assert(perm@.value().val as int == perm@.value().ghost_token@.value());
+                }
 
-                let CounterWithPerm { val, ghost_token }  = global_arc_thread1.cell.take(Tracked(perm.borrow_mut()));
-
-                let ghost ghost_token = ghost_token@; 
+                let CounterWithPerm { val, mut ghost_token }  = global_arc_thread1.cell.take(Tracked(perm.borrow_mut())); 
                 
                 proof {
-                    global_arc_thread1.instance.borrow().tr_inc_a(&mut ghost_token, &mut token);
+                    assert(ghost_token@.instance_id() == global_arc_thread1.instance@.id());
+                    assert(val as int == ghost_token@.value());
+                    assert(token.instance_id() == global_arc_thread1.instance@.id());
+
+                    global_arc_thread1.instance.borrow().increment_will_not_overflow_u32(ghost_token.borrow_mut());
+                    global_arc_thread1.instance.borrow().tr_inc_a(ghost_token.borrow_mut(), &mut token);
                 }
 
                 global_arc_thread1.cell.replace(Tracked(perm.borrow_mut()), CounterWithPerm {
                     val: val + 1,
-                    ghost_token: Tracked(ghost_token),
+                    ghost_token,
                 });
 
                 global_arc_thread1.release_lock(perm);

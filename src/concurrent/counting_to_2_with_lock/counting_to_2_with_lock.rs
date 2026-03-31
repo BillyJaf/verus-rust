@@ -140,7 +140,8 @@ impl Global {
             invariant self.wf(),
         {
             let tracked mut points_to_opt = None;
-            let res = atomic_with_ghost!(&self.atomic => compare_exchange(false, true);
+            let res = atomic_with_ghost!(
+                &self.atomic => compare_exchange(false, true);
                 ghost points_to_inv => {
                     tracked_swap(&mut points_to_opt, &mut points_to_inv);
                 }
@@ -161,7 +162,8 @@ impl Global {
         ensures
             self.wf()
     {
-        atomic_with_ghost!(&self.atomic => store(false);
+        atomic_with_ghost!(
+            &self.atomic => store(false);
             ghost points_to_inv => {
                 points_to_inv = Some(points_to.get());
             }
@@ -187,7 +189,6 @@ fn main() {
     let global_arc = Arc::new(global);
 
     // Spawn threads
-    let ghost instance_id = instance.id();
 
     // Thread 1
     let global_arc_thread1 = global_arc.clone();

@@ -118,7 +118,8 @@ impl Global {
             cwp.ghost_token@.instance_id() == instance@.id(),
             cwp.ghost_token@.value() == cwp.val as int
         ensures 
-            global.wf()
+            global.wf(),
+            global.instance@.id() == instance@.id(),
     {
         let (cell, Tracked(perm)) = PCell::new(cwp);
         let atomic = AtomicBool::new(Ghost((cell, instance)), false, Tracked(Some(perm)));
@@ -182,54 +183,35 @@ fn main() {
         ghost_token: Tracked(counter_token),
     };
 
-    let ghost instance_id = instance.id();
-
-    let global = Global::new(cwp, Tracked(instance));
-
-    proof {
-        assert(global.instance@.id() == instance_id);
-    }
-
+    let global = Global::new(cwp, Tracked(instance.clone()));
     let global_arc = Arc::new(global);
 
     // Spawn threads
+    let ghost instance_id = instance.id();
 
     // Thread 1
     let global_arc_thread1 = global_arc.clone();
-    proof {
-        // assert();
-        assert(global.instance@.id() == global_arc_thread1.instance@.id());
-        assert(global_arc_thread1.instance@.id() == instance_id);
-    }
     
     let join_handle1 = spawn(
         (move || -> (new_token: Tracked<machine::inc_a>)
             ensures
                 new_token@.instance_id() == instance.id(),
+                new_token@.value() == true,
             {
                 let tracked mut token = inc_a_token;
 
                 let mut perm = global_arc_thread1.acquire_lock();
 
-                proof {
-                    assert(global_arc_thread1.instance@.id() == instance_id);
-                    assert(perm@.value().val as int == perm@.value().ghost_token@.value());
-                    assert(perm@.value().ghost_token@.instance_id() == instance_id);
-                    assert(token.instance_id() == instance_id);
-                }
-
-                let CounterWithPerm { val, mut ghost_token }  = global_arc_thread1.cell.take(Tracked(perm.borrow_mut())); 
+                let mut cwp = global_arc_thread1.cell.take(Tracked(perm.borrow_mut())); 
+                let val = cwp.val;
+                let mut ghost_token = cwp.ghost_token;
                 
                 proof {
-                    assert(ghost_token@.instance_id() == global_arc_thread1.instance@.id());
-                    assert(val as int == ghost_token@.value());
-                    assert(token.instance_id() == global_arc_thread1.instance@.id());
-
                     global_arc_thread1.instance.borrow().increment_will_not_overflow_u32(ghost_token.borrow_mut());
                     global_arc_thread1.instance.borrow().tr_inc_a(ghost_token.borrow_mut(), &mut token);
                 }
 
-                global_arc_thread1.cell.replace(Tracked(perm.borrow_mut()), CounterWithPerm {
+                global_arc_thread1.cell.put(Tracked(perm.borrow_mut()), CounterWithPerm {
                     val: val + 1,
                     ghost_token,
                 });
@@ -238,5 +220,76 @@ fn main() {
                 Tracked(token)
             }),
     );
+
+    // Thread 2
+    let global_arc_thread2 = global_arc.clone();
+
+    let join_handle2 = spawn(
+        (move || -> (new_token: Tracked<machine::inc_b>)
+            ensures
+                new_token@.instance_id() == instance.id(),
+                new_token@.value() == true,
+            {
+                let tracked mut token = inc_b_token;
+
+                let mut perm = global_arc_thread2.acquire_lock();
+
+                let mut cwp = global_arc_thread2.cell.take(Tracked(perm.borrow_mut())); 
+                let val = cwp.val;
+                let mut ghost_token = cwp.ghost_token;
+                
+                proof {
+                    global_arc_thread2.instance.borrow().increment_will_not_overflow_u32(ghost_token.borrow_mut());
+                    global_arc_thread2.instance.borrow().tr_inc_b(ghost_token.borrow_mut(), &mut token);
+                }
+
+                global_arc_thread2.cell.put(Tracked(perm.borrow_mut()), CounterWithPerm {
+                    val: val + 1,
+                    ghost_token,
+                });
+
+                global_arc_thread2.release_lock(perm);
+                Tracked(token)
+            }),
+    );
+
+    // Join threads
+    let tracked inc_a_token;
+    match join_handle1.join() {
+        Result::Ok(token) => {
+            proof {
+                inc_a_token = token.get();
+            }
+        },
+        _ => {
+            return ;
+        },
+    };
+    let tracked inc_b_token;
+    match join_handle2.join() {
+        Result::Ok(token) => {
+            proof {
+                inc_b_token = token.get();
+            }
+        },
+        _ => {
+            return ;
+        },
+    };
+
+    // Join threads, load the atomic again
+    let mut perm = global_arc.acquire_lock();
+    let mut cwp = global_arc.cell.borrow(Tracked(perm.borrow())); 
+    let val = cwp.val;
+    let ghost_token = &cwp.ghost_token;
+
+    proof {
+        global_arc.instance.borrow().finalize(ghost_token.borrow(), &inc_a_token, &inc_b_token);
+    }
+
+    global_arc.release_lock(perm);
+
+
+    assert(val == 2);
 }
 }

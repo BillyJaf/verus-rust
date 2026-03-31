@@ -132,6 +132,7 @@ impl Global {
             points_to@.id() == self.cell.id(), 
             points_to@.is_init(),
             points_to@.value().ghost_token@.instance_id() == self.instance@.id(),
+            points_to@.value().ghost_token@.value() == points_to@.value().val as int,
             self.wf(),
     {
         loop
@@ -180,13 +181,27 @@ fn main() {
         val: 0,
         ghost_token: Tracked(counter_token),
     };
-    let global = Global::new(cwp, Tracked(instance.clone()));
+
+    let ghost instance_id = instance.id();
+
+    let global = Global::new(cwp, Tracked(instance));
+
+    proof {
+        assert(global.instance@.id() == instance_id);
+    }
+
     let global_arc = Arc::new(global);
 
     // Spawn threads
 
     // Thread 1
     let global_arc_thread1 = global_arc.clone();
+    proof {
+        // assert();
+        assert(global.instance@.id() == global_arc_thread1.instance@.id());
+        assert(global_arc_thread1.instance@.id() == instance_id);
+    }
+    
     let join_handle1 = spawn(
         (move || -> (new_token: Tracked<machine::inc_a>)
             ensures
@@ -197,7 +212,10 @@ fn main() {
                 let mut perm = global_arc_thread1.acquire_lock();
 
                 proof {
+                    assert(global_arc_thread1.instance@.id() == instance_id);
                     assert(perm@.value().val as int == perm@.value().ghost_token@.value());
+                    assert(perm@.value().ghost_token@.instance_id() == instance_id);
+                    assert(token.instance_id() == instance_id);
                 }
 
                 let CounterWithPerm { val, mut ghost_token }  = global_arc_thread1.cell.take(Tracked(perm.borrow_mut())); 

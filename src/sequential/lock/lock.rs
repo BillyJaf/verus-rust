@@ -48,7 +48,8 @@ impl<T> Lock<T> {
             invariant self.wf(),
         {
             let tracked mut points_to_opt = None;
-            let res = atomic_with_ghost!(&self.atomic => compare_exchange(false, true);
+            let res = atomic_with_ghost!(
+                &self.atomic => compare_exchange(false, true);
                 ghost points_to_inv => {
                     tracked_swap(&mut points_to_opt, &mut points_to_inv);
                 }

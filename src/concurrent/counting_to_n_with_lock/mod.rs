@@ -1,1 +1,2 @@
+#[verifier::verify]
 pub mod counting_to_n_with_lock;

@@ -10,8 +10,6 @@ use vstd::thread::*;
 use vstd::{pervasive::*, *};
 use vstd::cell::PCell;
 
-use crate::sequential::lock::lock::Lock;
-
 verus! {
 
 tokenized_state_machine!(
@@ -119,7 +117,7 @@ impl Global {
             cwp.ghost_token@.value() == cwp.val as int
         ensures 
             global.wf(),
-            global.instance@.id() == instance@.id(),
+            global.instance == instance,
     {
         let (cell, Tracked(perm)) = PCell::new(cwp);
         let atomic = AtomicBool::new(Ghost((cell, instance)), false, Tracked(Some(perm)));

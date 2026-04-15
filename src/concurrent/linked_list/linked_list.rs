@@ -12,15 +12,17 @@ use vstd::cell::*;
 
 verus! {
 
+pub ghost struct GhostNodeState {
+    pub data: u32,
+    pub next_node_id: Option<nat>
+}
+
 tokenized_state_machine!{
     machine {
         fields {
             // Map<node_id, node>
             #[sharding(map)]
-            pub nodes: Map<nat, Node>,
-
-            #[sharding(map)]
-            pub next_nodes: Map<nat, Option<nat>>,
+            pub nodes: Map<nat, GhostNodeState>,
 
             #[sharding(constant)]
             pub dummy_id: nat,
@@ -80,11 +82,11 @@ tokenized_state_machine!{
 }
 
 pub struct Node {
-    pub id: u32,
-    pub next_id: Option<u32>,
     pub data: u32,
-    // pub ghost_nodes: Tracked<machine::counter>,
-    // pub ghost_next_nodes: 
+    pub id: nat,
+    pub next_node_id: Option<nat>,
+    pub next_node: Option<Box<LockedNode>>,
+    pub ghost_map_entry: Tracked<machine::nodes>,
 }
 
 struct_with_invariants!{
@@ -92,18 +94,23 @@ struct_with_invariants!{
         pub atomic: AtomicBool<_, Option<cell::PointsTo<Node>>, _>,
         pub cell: PCell<Node>,
         pub instance: Tracked<machine::Instance>,
+        pub id: nat,
     }
 
     spec fn wf(&self) -> bool {
-        invariant on atomic with (cell, instance) is (v: bool, g: Option<cell::PointsTo<Node>>) {
+        invariant on atomic with (cell, instance, id) is (v: bool, g: Option<cell::PointsTo<Node>>) {
             match g {
                 None => v == true,
                 Some(points_to) => {
                     v == false &&
                     points_to.id() == cell.id() &&
-                    points_to.is_init()
-                    // points_to.value().ghost_token@.instance_id() == instance@.id() &&
-                    // points_to.value().ghost_token@.value() == points_to.value().val as int
+                    points_to.is_init() &&
+                    points_to.value().id == id &&
+                    points_to.value().ghost_map_entry@.instance_id() == instance@.id() &&
+                    points_to.value().ghost_map_entry@.key() == points_to.value().id &&
+                    points_to.value().ghost_map_entry@.value() == GhostNodeState { next_node_id: points_to.value().next_node_id, data: points_to.value().data } &&
+                    (points_to.value().next_node_id.is_none() <==> points_to.value().next_node.is_none()) &&
+                    (points_to.value().next_node_id.is_some() ==> points_to.value().next_node.unwrap().id == points_to.value().next_node_id.unwrap())
                 }
             }
         }

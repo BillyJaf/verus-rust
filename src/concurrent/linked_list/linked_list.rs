@@ -116,4 +116,75 @@ struct_with_invariants!{
         }
     }
 }
+
+impl LockedNode {
+    fn new(node: Node, instance: Tracked<machine::Instance>) -> (linked_list: Self)
+        requires
+            node.ghost_map_entry@.instance_id() == instance@.id(),
+            node.ghost_map_entry@.key() == node.id,
+            node.next_node_id == None::<nat>,
+            node.next_node == None::<Box<LockedNode>>,
+            node.ghost_map_entry@.value() == (GhostNodeState { next_node_id: None, data: node.data })
+        ensures 
+            linked_list.wf(),
+            linked_list.instance == instance,
+    {
+        let id = node.id;
+        let (cell, Tracked(perm)) = PCell::new(node);
+        let atomic = AtomicBool::new(Ghost((cell, instance, perm.value().id)), false, Tracked(Some(perm)));
+        Self { atomic, cell, instance, id: id }
+    }
+
+    fn acquire_lock(&self) -> (points_to: Tracked<cell::PointsTo<Node>>)
+        requires 
+            self.wf(),
+        ensures 
+            points_to@.id() == self.cell.id() &&
+            points_to@.is_init() &&
+            points_to@.value().id == self.id &&
+            points_to@.value().ghost_map_entry@.instance_id() == self.instance@.id() &&
+            points_to@.value().ghost_map_entry@.key() == points_to@.value().id &&
+            points_to@.value().ghost_map_entry@.value() == (GhostNodeState { next_node_id: points_to@.value().next_node_id, data: points_to@.value().data }) &&
+            (points_to@.value().next_node_id.is_none() <==> points_to@.value().next_node.is_none()) &&
+            (points_to@.value().next_node_id.is_some() ==> points_to@.value().next_node.unwrap().id == points_to@.value().next_node_id.unwrap()) &&
+            self.wf(),
+    {
+        loop
+            invariant self.wf(),
+        {
+            let tracked mut points_to_opt = None;
+            let res = atomic_with_ghost!(
+                &self.atomic => compare_exchange(false, true);
+                ghost points_to_inv => {
+                    tracked_swap(&mut points_to_opt, &mut points_to_inv);
+                }
+            );
+            if res.is_ok() {
+                return Tracked(points_to_opt.tracked_unwrap());
+            }
+        }
+    }
+
+    fn release_lock(&self, points_to: Tracked<cell::PointsTo<Node>>)
+        requires
+            self.wf(),
+            points_to@.id() == self.cell.id() &&
+            points_to@.is_init() &&
+            points_to@.value().id == self.id &&
+            points_to@.value().ghost_map_entry@.instance_id() == self.instance@.id() &&
+            points_to@.value().ghost_map_entry@.key() == points_to@.value().id &&
+            points_to@.value().ghost_map_entry@.value() == (GhostNodeState { next_node_id: points_to@.value().next_node_id, data: points_to@.value().data }) &&
+            (points_to@.value().next_node_id.is_none() <==> points_to@.value().next_node.is_none()) &&
+            (points_to@.value().next_node_id.is_some() ==> points_to@.value().next_node.unwrap().id == points_to@.value().next_node_id.unwrap())
+        ensures
+            self.wf()
+    {
+        atomic_with_ghost!(
+            &self.atomic => store(false);
+            ghost points_to_inv => {
+                points_to_inv = Some(points_to.get());
+            }
+        );
+    }
+}
 }

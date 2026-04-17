@@ -12,39 +12,57 @@ use vstd::cell::*;
 
 verus! {
 
-pub ghost struct GhostNodeState {
-    pub data: u32,
-    pub next_node_id: Option<nat>
+
+pub enum NodeData {
+    Dummy,
+    Node(u32)
 }
 
 tokenized_state_machine!{
     machine {
         fields {
-            // Map<node_id, node>
             #[sharding(map)]
-            pub nodes: Map<nat, GhostNodeState>,
-
-            #[sharding(constant)]
-            pub dummy_id: nat,
+            pub nodes: Map<NodeData, Option<NodeData>>,
         }
 
-        // #[invariant]
-        // pub fn main_inv(&self) -> bool {
-        //     self.counter == self.stamped_tickets
-        //     && self.stamped_tickets + self.unstamped_tickets == self.num_threads
-        // }
+        #[invariant]
+        pub fn main_inv(&self) -> bool {
+            // The dummy node always exists
+            &&& self.nodes.dom().contains(NodeData::Dummy)
+            // The dummy node points to the smallest element or nothing
+            &&& self.nodes[NodeData::Dummy] == None::<NodeData> || 
+                (
+                    exists |i: u32| #![auto] 
+                        self.nodes[NodeData::Dummy] == Some(NodeData::Node(i)) &&
+                        forall |j: u32| #![auto] self.nodes.dom().contains(NodeData::Node(j)) ==> i <= j
+                    
+                )
+            // Everything else is sorted with unique data
+            &&& (
+                    forall |i: u32| #![auto] self.nodes.dom().contains(NodeData::Node(i)) ==> 
+                        (
+                            self.nodes[NodeData::Node(i)] == None::<NodeData> ||
+                            (exists |j: u32| #![auto] self.nodes[NodeData::Node(i)] == Some(NodeData::Node(j)) && i < j)
+                        )
+                )
+            // Every map entry (except for the dummy) is pointed to by another entry
+            &&& (forall |i: u32| #![auto] self.nodes.dom().contains(NodeData::Node(i)) ==>
+                    (
+                        self.nodes[NodeData::Dummy] == Some(NodeData::Node(i)) ||
+                        (exists |j: u32| #![auto] self.nodes[NodeData::Node(j)] == Some(NodeData::Node(i)) && j < i)
+                    )
+                )
+        }
 
-        // init!{
-        //     initialize(num_threads: nat) {
-        //         init num_threads = num_threads;
-        //         init counter = 0;
-        //         init unstamped_tickets = num_threads;
-        //         init stamped_tickets = 0;
-        //     }
-        // }
+        init!{
+            initialize()
+            {
+                init nodes = Map::empty().insert(NodeData::Dummy, None::<NodeData>);
+            }
+        }
 
         // transition!{
-        //     tr_inc() {
+        //     insert_element() {
         //         // Equivalent to:
         //         //    require(pre.unstamped_tickets >= 1);
         //         //    update unstampted_tickets = pre.unstamped_tickets - 1
@@ -72,8 +90,9 @@ tokenized_state_machine!{
         //     }
         // }
 
-        // #[inductive(initialize)]
-        // fn initialize_inductive(post: Self, num_threads: nat) { }
+        #[inductive(initialize)]
+        fn initialize_inductive(post: Self) { 
+        }
 
         // #[inductive(tr_inc)]
         // fn tr_inc_preserves(pre: Self, post: Self) {
@@ -82,9 +101,7 @@ tokenized_state_machine!{
 }
 
 pub struct Node {
-    pub data: u32,
-    pub id: nat,
-    pub next_node_id: Option<nat>,
+    pub data: NodeData,
     pub next_node: Option<Box<LockedNode>>,
     pub ghost_map_entry: Tracked<machine::nodes>,
 }
@@ -94,23 +111,24 @@ struct_with_invariants!{
         pub atomic: AtomicBool<_, Option<cell::PointsTo<Node>>, _>,
         pub cell: PCell<Node>,
         pub instance: Tracked<machine::Instance>,
-        pub id: nat,
+        // CHECK BECAUSE THIS MIGHT BE CHEATING EVEN THOUGH THE INVARIANT MAINTAINS THAT IT CAN'T BE ALTERED WITHOUT LOCK
+        pub data_view: NodeData,
     }
 
     spec fn wf(&self) -> bool {
-        invariant on atomic with (cell, instance, id) is (v: bool, g: Option<cell::PointsTo<Node>>) {
+        invariant on atomic with (cell, instance, data_view) is (v: bool, g: Option<cell::PointsTo<Node>>) {
             match g {
                 None => v == true,
                 Some(points_to) => {
                     v == false &&
                     points_to.id() == cell.id() &&
                     points_to.is_init() &&
-                    points_to.value().id == id &&
+                    points_to.value().data == data_view &&
                     points_to.value().ghost_map_entry@.instance_id() == instance@.id() &&
-                    points_to.value().ghost_map_entry@.key() == points_to.value().id &&
-                    points_to.value().ghost_map_entry@.value() == GhostNodeState { next_node_id: points_to.value().next_node_id, data: points_to.value().data } &&
-                    (points_to.value().next_node_id.is_none() <==> points_to.value().next_node.is_none()) &&
-                    (points_to.value().next_node_id.is_some() ==> points_to.value().next_node.unwrap().id == points_to.value().next_node_id.unwrap())
+                    points_to.value().ghost_map_entry@.key() == points_to.value().data &&
+                    (points_to.value().ghost_map_entry@.value().is_none() <==> points_to.value().next_node.is_none()) &&
+                    (points_to.value().ghost_map_entry@.value().is_some() ==> 
+                    points_to.value().next_node.unwrap().data_view == points_to.value().ghost_map_entry@.value().unwrap())
                 }
             }
         }
@@ -118,73 +136,95 @@ struct_with_invariants!{
 }
 
 impl LockedNode {
-    fn new(node: Node, instance: Tracked<machine::Instance>) -> (linked_list: Self)
+    fn start(node: Node, instance: Tracked<machine::Instance>) -> (dummy_node: Self)
         requires
             node.ghost_map_entry@.instance_id() == instance@.id(),
-            node.ghost_map_entry@.key() == node.id,
-            node.next_node_id == None::<nat>,
+            node.ghost_map_entry@.key() == NodeData::Dummy,
+            node.ghost_map_entry@.value() == None::<NodeData>,
+            node.data == NodeData::Dummy,
             node.next_node == None::<Box<LockedNode>>,
-            node.ghost_map_entry@.value() == (GhostNodeState { next_node_id: None, data: node.data })
         ensures 
-            linked_list.wf(),
-            linked_list.instance == instance,
+            dummy_node.wf(),
+            dummy_node.instance == instance,
     {
-        let id = node.id;
         let (cell, Tracked(perm)) = PCell::new(node);
-        let atomic = AtomicBool::new(Ghost((cell, instance, perm.value().id)), false, Tracked(Some(perm)));
-        Self { atomic, cell, instance, id: id }
+        let atomic = AtomicBool::new(Ghost((cell, instance, NodeData::Dummy)), false, Tracked(Some(perm)));
+        Self { atomic, cell, instance, data_view: NodeData::Dummy}
     }
 
-    fn acquire_lock(&self) -> (points_to: Tracked<cell::PointsTo<Node>>)
-        requires 
-            self.wf(),
-        ensures 
-            points_to@.id() == self.cell.id() &&
-            points_to@.is_init() &&
-            points_to@.value().id == self.id &&
-            points_to@.value().ghost_map_entry@.instance_id() == self.instance@.id() &&
-            points_to@.value().ghost_map_entry@.key() == points_to@.value().id &&
-            points_to@.value().ghost_map_entry@.value() == (GhostNodeState { next_node_id: points_to@.value().next_node_id, data: points_to@.value().data }) &&
-            (points_to@.value().next_node_id.is_none() <==> points_to@.value().next_node.is_none()) &&
-            (points_to@.value().next_node_id.is_some() ==> points_to@.value().next_node.unwrap().id == points_to@.value().next_node_id.unwrap()) &&
-            self.wf(),
-    {
-        loop
-            invariant self.wf(),
-        {
-            let tracked mut points_to_opt = None;
-            let res = atomic_with_ghost!(
-                &self.atomic => compare_exchange(false, true);
-                ghost points_to_inv => {
-                    tracked_swap(&mut points_to_opt, &mut points_to_inv);
-                }
-            );
-            if res.is_ok() {
-                return Tracked(points_to_opt.tracked_unwrap());
-            }
-        }
-    }
+    // fn new(node: Node, instance: Tracked<machine::Instance>) -> (normal_node: Self)
+    //     requires
+    //         node.ghost_map_entry@.instance_id() == instance@.id(),
+    //         node.ghost_map_entry@.key() == node.id,
+    //         node.next_node_id == None::<nat>,
+    //         node.next_node == None::<Box<LockedNode>>,
+    //         node.ghost_map_entry@.value() == (GhostNodeState { next_node_id: None, data: node.data })
+    //     ensures 
+    //         normal_node.wf(),
+    //         normal_node.instance == instance,
+    // {
+    //     let (cell, Tracked(perm)) = PCell::new(node);
+    //     let atomic = AtomicBool::new(Ghost((cell, instance, perm.value().id)), false, Tracked(Some(perm)));
+    //     Self { atomic, cell, instance}
+    // }
 
-    fn release_lock(&self, points_to: Tracked<cell::PointsTo<Node>>)
-        requires
-            self.wf(),
-            points_to@.id() == self.cell.id() &&
-            points_to@.is_init() &&
-            points_to@.value().id == self.id &&
-            points_to@.value().ghost_map_entry@.instance_id() == self.instance@.id() &&
-            points_to@.value().ghost_map_entry@.key() == points_to@.value().id &&
-            points_to@.value().ghost_map_entry@.value() == (GhostNodeState { next_node_id: points_to@.value().next_node_id, data: points_to@.value().data }) &&
-            (points_to@.value().next_node_id.is_none() <==> points_to@.value().next_node.is_none()) &&
-            (points_to@.value().next_node_id.is_some() ==> points_to@.value().next_node.unwrap().id == points_to@.value().next_node_id.unwrap())
-        ensures
-            self.wf()
-    {
-        atomic_with_ghost!(
-            &self.atomic => store(false);
-            ghost points_to_inv => {
-                points_to_inv = Some(points_to.get());
-            }
-        );
-    }
+    // fn acquire_lock(&self) -> (points_to: Tracked<cell::PointsTo<Node>>)
+    //     requires 
+    //         self.wf(),
+    //     ensures 
+    //         points_to@.id() == self.cell.id() &&
+    //         points_to@.is_init() &&
+    //         points_to@.value().id == self.id &&
+    //         points_to@.value().ghost_map_entry@.instance_id() == self.instance@.id() &&
+    //         points_to@.value().ghost_map_entry@.key() == points_to@.value().id &&
+    //         points_to@.value().ghost_map_entry@.value() == (GhostNodeState { next_node_id: points_to@.value().next_node_id, data: points_to@.value().data }) &&
+    //         (points_to@.value().next_node_id.is_none() <==> points_to@.value().next_node.is_none()) &&
+    //         (points_to@.value().next_node_id.is_some() ==> points_to@.value().next_node.unwrap().id == points_to@.value().next_node_id.unwrap()) &&
+    //         self.wf(),
+    // {
+    //     loop
+    //         invariant self.wf(),
+    //     {
+    //         let tracked mut points_to_opt = None;
+    //         let res = atomic_with_ghost!(
+    //             &self.atomic => compare_exchange(false, true);
+    //             ghost points_to_inv => {
+    //                 tracked_swap(&mut points_to_opt, &mut points_to_inv);
+    //             }
+    //         );
+    //         if res.is_ok() {
+    //             return Tracked(points_to_opt.tracked_unwrap());
+    //         }
+    //     }
+    // }
+
+    // fn release_lock(&self, points_to: Tracked<cell::PointsTo<Node>>)
+    //     requires
+    //         self.wf(),
+    //         points_to@.id() == self.cell.id() &&
+    //         points_to@.is_init() &&
+    //         points_to@.value().id == self.id &&
+    //         points_to@.value().ghost_map_entry@.instance_id() == self.instance@.id() &&
+    //         points_to@.value().ghost_map_entry@.key() == points_to@.value().id &&
+    //         points_to@.value().ghost_map_entry@.value() == (GhostNodeState { next_node_id: points_to@.value().next_node_id, data: points_to@.value().data }) &&
+    //         (points_to@.value().next_node_id.is_none() <==> points_to@.value().next_node.is_none()) &&
+    //         (points_to@.value().next_node_id.is_some() ==> points_to@.value().next_node.unwrap().id == points_to@.value().next_node_id.unwrap())
+    //     ensures
+    //         self.wf()
+    // {
+    //     atomic_with_ghost!(
+    //         &self.atomic => store(false);
+    //         ghost points_to_inv => {
+    //             points_to_inv = Some(points_to.get());
+    //         }
+    //     );
+    // }
+}
+
+fn main() {
+    let tracked (
+        Tracked(instance),
+        Tracked(nodes),
+    ) = machine::Instance::initialize();
 }
 }

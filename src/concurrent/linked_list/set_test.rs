@@ -148,10 +148,10 @@ impl LockedNode {
         Self { atomic, cell, instance }
     }
 
-    fn new(node: Node, lock_token: Tracked<machine::lock_tokens>, instance: Tracked<machine::Instance>) -> (normal_node: Self)
+    fn new(node: Node, instance: Tracked<machine::Instance>) -> (normal_node: Self)
         requires
-            lock_token@.instance_id() == instance@.id(),
-            node.data == lock_token@.element(),
+            node.lock_token@.instance_id() == instance@.id(),
+            node.data == node.lock_token@.element(),
             node.next_node == None::<Box<LockedNode>>,
         ensures 
             normal_node.wf(),

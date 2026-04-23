@@ -131,6 +131,17 @@ tokenized_state_machine!{
             }
         }
 
+        transition!{
+            insert_node_inbetween(lower_node: u32, upper_node: u32, new_node: u32)
+            {   
+                require(lower_node < new_node);
+                require(new_node < upper_node);
+                remove nodes -= [NodeData::Node(lower_node) => Some(NodeData::Node(upper_node))];
+                add nodes += [NodeData::Node(lower_node) => Some(NodeData::Node(new_node))];
+                add nodes += [NodeData::Node(new_node) => Some(NodeData::Node(upper_node))];
+            }
+        }
+
         #[inductive(initialize)]
         fn initialize_inductive(post: Self) { 
         }
@@ -146,10 +157,12 @@ tokenized_state_machine!{
         #[inductive(add_to_node_tail)]
         fn add_to_node_tail_inductive(pre: Self, post: Self, current_tail: u32, new_tail: u32) { 
         }
+
+        #[inductive(insert_node_inbetween)]
+        fn insert_node_inbetween_inductive(pre: Self, post: Self, lower_node: u32, upper_node: u32, new_node: u32) { 
+        }
     }
 }
-
-fn add(x: u32) {}
 
 fn main() {
     let tracked (

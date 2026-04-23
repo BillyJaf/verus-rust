@@ -49,10 +49,22 @@ tokenized_state_machine!{
                     (
                         // The dummy node points to the smallest element in the list:
                         (
-                            exists |i: u32| #![auto] 
-                                self.nodes[NodeData::Dummy] == Some(NodeData::Node(i)) &&
-                                forall |j: u32| #![auto] self.nodes.dom().contains(NodeData::Node(j)) ==> i <= j
+                            forall |i: u32| #![auto] 
+                                self.nodes[NodeData::Dummy] == Some(NodeData::Node(i)) ==>
+                                forall |j: u32| #![auto] j < i ==> !self.nodes.dom().contains(NodeData::Node(j))
                         
+                        ) &&
+
+                        // The tail node points to the largest element in the list:
+                        (
+                            forall |i: u32| #![auto]
+                                (
+                                    self.nodes.dom().contains(NodeData::Node(i)) && 
+                                    self.nodes[NodeData::Node(i)] == None::<NodeData>
+                                ) ==>
+                                (
+                                    (forall |j: u32| #![auto] i < j ==> !self.nodes.dom().contains(NodeData::Node(j)))
+                                )
                         ) &&
 
                         // Everything in the list is sorted (smallest to largest).
@@ -67,49 +79,8 @@ tokenized_state_machine!{
                                 )
                         ) &&
 
-                        // There is a node that points to None (this is the tail of the list).
-                        // This node must be the largest element in the list:
-                        (
-                            exists |i: u32| #![auto]
-                                (
-                                    self.nodes.dom().contains(NodeData::Node(i)) && 
-                                    self.nodes[NodeData::Node(i)] == None::<NodeData>
-                                ) ==>
-                                (
-                                    (forall |j: u32| #![auto] self.nodes.dom().contains(NodeData::Node(j)) ==> j <= i)
-                                )
-                        ) &&
-
-                        // // The following points could be included in the above statements.
-                        // // I decided to separate them because of how important they are.
                         // // We must assert that for any mapping [a => c], there are no entries in the map
                         // // with key b such that a < b < c. 
-
-                        // // Also, if there is a map with [a => None],
-                        // // then there are no entires in the map with key b and a < b. 
-                        
-                        // // Similarly, the map
-                        // // [Dummy => a] implies that there are no keys smaller than a.
-                        
-                        // Case [Dummy => a]:
-                        (
-                            exists |i: u32| #![auto] 
-                                self.nodes[NodeData::Dummy] == Some(NodeData::Node(i)) ==> 
-                                (forall |j: u32| #![auto] j < i ==> !self.nodes.dom().contains(NodeData::Node(j)))
-                        ) &&
-
-                        // Case [a => None]
-                        (
-                            exists |i: u32| #![auto]
-                                (
-                                    self.nodes.dom().contains(NodeData::Node(i)) && 
-                                    self.nodes[NodeData::Node(i)] == None::<NodeData>
-                                ) ==> (
-                                    forall |j: u32| #![auto] i < j ==> !self.nodes.dom().contains(NodeData::Node(j))
-                                )
-                        ) &&
-
-                        // Every inbetween:
                         (
                             forall |i: u32| #![auto] 
                                 (
@@ -155,7 +126,6 @@ tokenized_state_machine!{
             {   
                 require(new_tail > current_tail);
                 remove nodes -= [NodeData::Node(current_tail) => None];
-                // have nodes >= [NodeData::Node(current_tail) => None];
                 add nodes += [NodeData::Node(current_tail) => Some(NodeData::Node(new_tail))];
                 add nodes += [NodeData::Node(new_tail) => None];
             }
@@ -171,12 +141,10 @@ tokenized_state_machine!{
 
         #[inductive(add_to_dummy_tail)]
         fn add_to_dummy_tail_inductive(pre: Self, post: Self, new_tail: u32) { 
-            assert(post.nodes.index(NodeData::Node(new_tail)) == None::<NodeData>);
         }
 
         #[inductive(add_to_node_tail)]
         fn add_to_node_tail_inductive(pre: Self, post: Self, current_tail: u32, new_tail: u32) { 
-            
         }
     }
 }

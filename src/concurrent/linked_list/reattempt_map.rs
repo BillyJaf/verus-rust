@@ -17,6 +17,18 @@ pub enum NodeData {
     Node(u32)
 }
 
+impl NodeData {
+    pub fn clone(&self) -> (cloned: Self) 
+        ensures
+            *self == cloned
+    {
+        match self {
+            NodeData::Dummy => NodeData::Dummy,
+            NodeData::Node(i) => NodeData::Node(*i),
+        }
+    }
+}
+
 tokenized_state_machine!{
     machine {
         fields {
@@ -161,6 +173,220 @@ tokenized_state_machine!{
         #[inductive(insert_node_inbetween)]
         fn insert_node_inbetween_inductive(pre: Self, post: Self, lower_node: u32, upper_node: u32, new_node: u32) { 
         }
+    }
+}
+
+pub struct DummyNode {
+    pub data: NodeData,
+    pub next_node: Option<Box<LockedNode>>,
+    pub map_token: Tracked<machine::nodes>
+}
+
+struct_with_invariants!{
+    pub struct LockedDummyNode {
+        pub atomic: AtomicBool<_, Option<cell::PointsTo<DummyNode>>, _>,
+        pub cell: PCell<DummyNode>,
+        pub instance: Tracked<machine::Instance>,
+    }
+
+    spec fn wf(&self) -> bool {
+        invariant on atomic with (cell, instance) is (v: bool, g: Option<cell::PointsTo<DummyNode>>) {
+            match g {
+                None => v == true,
+                Some(points_to) => {
+                    v == false &&
+                    points_to.id() == cell.id() &&
+                    points_to.is_init() &&
+                    points_to.value().data == NodeData::Dummy &&
+                    points_to.value().map_token@.key() == NodeData::Dummy &&
+                    (points_to.value().map_token@.value().is_none() <==> points_to.value().next_node.is_none()) && 
+                    (
+                        points_to.value().map_token@.value().is_some() ==> 
+                            points_to.value().map_token@.value().unwrap() == points_to.value().next_node.unwrap().data_view
+                    )
+                }
+            }
+        }
+    }
+}
+
+impl LockedDummyNode {
+    fn new(map_token: Tracked<machine::nodes>, instance: Tracked<machine::Instance>) -> (dummy_node: Self)
+        requires
+            map_token@.instance_id() == instance@.id(),
+            map_token@.key() == NodeData::Dummy,
+            map_token@.value() == None::<NodeData>,
+        ensures 
+            dummy_node.wf(),
+            dummy_node.instance == instance,
+    {
+        let node = DummyNode { data: NodeData::Dummy, next_node: None::<Box<LockedNode>>, map_token};
+        let (cell, Tracked(perm)) = PCell::new(node);
+        let atomic = AtomicBool::new(Ghost((cell, instance)), false, Tracked(Some(perm)));
+        Self { atomic, cell, instance }
+    }
+
+    fn acquire_lock(&self) -> (points_to: Tracked<cell::PointsTo<DummyNode>>)
+        requires 
+            self.wf(),
+        ensures 
+            points_to@.id() == self.cell.id(),
+            points_to@.is_init(),
+            points_to@.value().data == NodeData::Dummy,
+            points_to@.value().map_token@.key() == NodeData::Dummy,
+            (points_to@.value().map_token@.value().is_none() <==> points_to@.value().next_node.is_none()), 
+            (points_to@.value().map_token@.value().is_some() ==> 
+                points_to@.value().map_token@.value().unwrap() == points_to@.value().next_node.unwrap().data_view),
+            self.wf()
+    {
+        loop
+            invariant self.wf(),
+        {
+            let tracked mut points_to_opt = None;
+            let res = atomic_with_ghost!(
+                &self.atomic => compare_exchange(false, true);
+                ghost points_to_inv => {
+                    tracked_swap(&mut points_to_opt, &mut points_to_inv);
+                }
+            );
+            if res.is_ok() {
+                return Tracked(points_to_opt.tracked_unwrap());
+            }
+        }
+    }
+
+    fn release_lock(&self, points_to: Tracked<cell::PointsTo<DummyNode>>)
+        requires
+            self.wf(),
+            points_to@.id() == self.cell.id(),
+            points_to@.is_init(),
+            points_to@.value().data == NodeData::Dummy,
+            points_to@.value().map_token@.key() == NodeData::Dummy,
+            (points_to@.value().map_token@.value().is_none() <==> points_to@.value().next_node.is_none()), 
+            (points_to@.value().map_token@.value().is_some() ==> 
+                points_to@.value().map_token@.value().unwrap() == points_to@.value().next_node.unwrap().data_view),
+        ensures
+            self.wf()
+    {
+        atomic_with_ghost!(
+            &self.atomic => store(false);
+            ghost points_to_inv => {
+                points_to_inv = Some(points_to.get());
+            }
+        );
+    }
+}
+
+pub struct Node {
+    pub data: NodeData,
+    pub next_node: Option<Box<LockedNode>>,
+    pub map_token: Tracked<machine::nodes>
+}
+
+struct_with_invariants!{
+    pub struct LockedNode {
+        pub atomic: AtomicBool<_, Option<cell::PointsTo<Node>>, _>,
+        pub cell: PCell<Node>,
+        pub instance: Tracked<machine::Instance>,
+        pub data_view: NodeData,
+    }
+
+    spec fn wf(&self) -> bool {
+        invariant on atomic with (cell, instance, data_view) is (v: bool, g: Option<cell::PointsTo<Node>>) {
+            match g {
+                None => v == true,
+                Some(points_to) => {
+                    v == false &&
+                    points_to.id() == cell.id() &&
+                    points_to.is_init() &&
+                    points_to.value().data == data_view &&
+                    points_to.value().data != NodeData::Dummy &&
+                    points_to.value().map_token@.key() == points_to.value().data &&
+                    (points_to.value().map_token@.value().is_none() <==> points_to.value().next_node.is_none()) && 
+                    (
+                        points_to.value().map_token@.value().is_some() ==> 
+                            points_to.value().map_token@.value().unwrap() == points_to.value().next_node.unwrap().data_view
+                    )
+                }
+            }
+        }
+    }
+}
+
+impl LockedNode {
+    fn new(data: NodeData, map_token: Tracked<machine::nodes>, next_node: Option<Box<LockedNode>>, instance: Tracked<machine::Instance>) -> (new_node: Self)
+        requires
+            data != NodeData::Dummy,
+            map_token@.instance_id() == instance@.id(),
+            map_token@.key() == data,
+            map_token@.value().is_none() <==> next_node.is_none(),
+            map_token@.value().is_some() ==>
+                map_token@.value().unwrap() == next_node.unwrap().data_view
+        ensures 
+            new_node.wf(),
+            new_node.instance == instance,
+    {   
+        let data_view = data.clone();
+        let node = Node { data, next_node, map_token};
+        let (cell, Tracked(perm)) = PCell::new(node);
+        let atomic = AtomicBool::new(Ghost((cell, instance, data_view)), false, Tracked(Some(perm)));
+        Self { atomic, cell, instance, data_view }
+    }
+
+    fn acquire_lock(&self) -> (points_to: Tracked<cell::PointsTo<Node>>)
+        requires 
+            self.wf(),
+        ensures 
+            points_to@.id() == self.cell.id(),
+            points_to@.is_init(),
+            points_to@.value().data == self.data_view,
+            points_to@.value().data != NodeData::Dummy,
+            points_to@.value().map_token@.key() == points_to@.value().data,
+            (points_to@.value().map_token@.value().is_none() <==> points_to@.value().next_node.is_none()), 
+            (
+                points_to@.value().map_token@.value().is_some() ==> 
+                    points_to@.value().map_token@.value().unwrap() == points_to@.value().next_node.unwrap().data_view
+            ),
+            self.wf()
+    {
+        loop
+            invariant self.wf(),
+        {
+            let tracked mut points_to_opt = None;
+            let res = atomic_with_ghost!(
+                &self.atomic => compare_exchange(false, true);
+                ghost points_to_inv => {
+                    tracked_swap(&mut points_to_opt, &mut points_to_inv);
+                }
+            );
+            if res.is_ok() {
+                return Tracked(points_to_opt.tracked_unwrap());
+            }
+        }
+    }
+
+    fn release_lock(&self, points_to: Tracked<cell::PointsTo<Node>>)
+        requires
+            self.wf(),
+            points_to@.id() == self.cell.id(),
+            points_to@.is_init(),
+            points_to@.value().data == self.data_view,
+            points_to@.value().data != NodeData::Dummy,
+            points_to@.value().map_token@.key() == points_to@.value().data,
+            (points_to@.value().map_token@.value().is_none() <==> points_to@.value().next_node.is_none()), 
+            (
+                points_to@.value().map_token@.value().is_some() ==> 
+                    points_to@.value().map_token@.value().unwrap() == points_to@.value().next_node.unwrap().data_view
+            )
+        ensures
+            self.wf()
+    {
+        atomic_with_ghost!(
+            &self.atomic => store(false);
+            ghost points_to_inv => {
+                points_to_inv = Some(points_to.get());
+            }
+        );
     }
 }
 

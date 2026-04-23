@@ -27,6 +27,18 @@ impl NodeData {
             NodeData::Node(i) => NodeData::Node(*i),
         }
     }
+
+    pub fn get(&self) -> (value: u32) 
+        requires
+            *self != NodeData::Dummy
+        ensures
+            forall |i: u32| #![auto] *self == NodeData::Node(i) ==> value == i
+    {
+        match self {
+            NodeData::Node(i) => *i,
+            _ => u32::MIN
+        }
+    }
 }
 
 tokenized_state_machine!{
@@ -198,6 +210,7 @@ struct_with_invariants!{
                     points_to.id() == cell.id() &&
                     points_to.is_init() &&
                     points_to.value().data == NodeData::Dummy &&
+                    points_to.value().map_token@.instance_id() == instance@.id() && 
                     points_to.value().map_token@.key() == NodeData::Dummy &&
                     (points_to.value().map_token@.value().is_none() <==> points_to.value().next_node.is_none()) && 
                     (
@@ -233,6 +246,7 @@ impl LockedDummyNode {
             points_to@.id() == self.cell.id(),
             points_to@.is_init(),
             points_to@.value().data == NodeData::Dummy,
+            points_to@.value().map_token@.instance_id() == self.instance@.id(),
             points_to@.value().map_token@.key() == NodeData::Dummy,
             (points_to@.value().map_token@.value().is_none() <==> points_to@.value().next_node.is_none()), 
             (points_to@.value().map_token@.value().is_some() ==> 
@@ -261,6 +275,7 @@ impl LockedDummyNode {
             points_to@.id() == self.cell.id(),
             points_to@.is_init(),
             points_to@.value().data == NodeData::Dummy,
+            points_to@.value().map_token@.instance_id() == self.instance@.id(),
             points_to@.value().map_token@.key() == NodeData::Dummy,
             (points_to@.value().map_token@.value().is_none() <==> points_to@.value().next_node.is_none()), 
             (points_to@.value().map_token@.value().is_some() ==> 
@@ -301,6 +316,7 @@ struct_with_invariants!{
                     points_to.is_init() &&
                     points_to.value().data == data_view &&
                     points_to.value().data != NodeData::Dummy &&
+                    points_to.value().map_token@.instance_id() == instance@.id() &&
                     points_to.value().map_token@.key() == points_to.value().data &&
                     (points_to.value().map_token@.value().is_none() <==> points_to.value().next_node.is_none()) && 
                     (
@@ -341,6 +357,7 @@ impl LockedNode {
             points_to@.is_init(),
             points_to@.value().data == self.data_view,
             points_to@.value().data != NodeData::Dummy,
+            points_to@.value().map_token@.instance_id() == self.instance@.id(),
             points_to@.value().map_token@.key() == points_to@.value().data,
             (points_to@.value().map_token@.value().is_none() <==> points_to@.value().next_node.is_none()), 
             (
@@ -372,6 +389,7 @@ impl LockedNode {
             points_to@.is_init(),
             points_to@.value().data == self.data_view,
             points_to@.value().data != NodeData::Dummy,
+            points_to@.value().map_token@.instance_id() == self.instance@.id(),
             points_to@.value().map_token@.key() == points_to@.value().data,
             (points_to@.value().map_token@.value().is_none() <==> points_to@.value().next_node.is_none()), 
             (
@@ -390,6 +408,76 @@ impl LockedNode {
     }
 }
 
+// fn insert_past_first_node(linked_list_head: &LockedNode, insert_data: u32)
+//     requires
+//         linked_list_head.wf()
+//     ensures
+//         linked_list_head.wf()
+// {
+//     let mut current_node_perm = linked_list_head.acquire_lock();
+//     loop {
+//         let mut current_node = linked_list_head.cell.take(Tracked(current_node_perm.borrow_mut()));
+
+//         if (current_node.next_node.is_some()) {
+//             let mut next_node_perm = current_node.next_node.unwrap().acquire_lock();
+//             let mut next_node = current_node.next_node.unwrap().cell.take(Tracked(next_node_perm.borrow_mut()));
+//             if (insert_data < next_node.data.get()) {
+//                 // INSERT HERE INBETWEEN
+//             } else {
+                
+//             }
+//         } else {
+//             // INSERT HERE AT END OF LIST
+//         }
+
+
+
+//         if (current_node.next_node.is_none()) {
+//             let new_node = LockedNode::new_node(data, current_node.next_node, instance);
+//             current_node.next_node = Some(Box::new(new_node));
+//             list.cell.put(Tracked(perm.borrow_mut()), current_node);
+//             list.release_lock(perm);
+//         }
+//         list.cell.put(Tracked(perm.borrow_mut()), current_node);
+//         list.release_lock(perm);
+//     }
+// }
+
+// fn insert(linked_list_head: &LockedDummyNode, insert_data: u32)
+//     requires
+//         linked_list_head.wf()
+//     ensures
+//         linked_list_head.wf()
+// {
+//     let mut current_node_perm = linked_list_head.acquire_lock();
+//     let mut current_node = linked_list_head.cell.take(Tracked(current_node_perm.borrow_mut()));
+
+//     // If the next node of the dummy is none, then we just have to insert where we are:
+//     if (current_node.next_node.is_none()) {
+//         let new_node = LockedNode::new(data, None::<Box<LockedNode>>, instance);
+//         let mut new_tail_node_perm = new_node.acquire_lock();
+
+//         assert(perm@.value().data == NodeData::Dummy);
+//         assert(new_tail_node_perm@.value().data != NodeData::Dummy);
+//         proof {
+//             list.instance.borrow().insert_at_dummy_tail(perm@, new_tail_node_perm@, list.ghost_token.borrow_mut());
+//         }
+//     } 
+
+//     else {
+//         let mut next_node_perm = current_node.next_node.unwrap().acquire_lock();
+//         let mut next_node = current_node.next_node.unwrap().cell.take(Tracked(next_node_perm.borrow_mut()));
+//         if (insert_data < next_node.data.get()) {
+//             // INSERT HERE INBETWEEN
+//         } else {
+//             // Keep going, we need to insert the data further in the list:
+//             linked_list_head.cell.put(Tracked(current_node_perm.borrow_mut()), current_node);
+//             linked_list_head.release_lock(current_node_perm);
+//         }
+//     }
+
+// }
+
 fn main() {
     let tracked (
         Tracked(instance),
@@ -403,14 +491,19 @@ fn main() {
         dummy_token = instance.add_dummy_node(&mut initialized);
     }
 
-    let tracked tuple;
-    let tracked new_dummy;
-    let tracked new_node;
+    let linked_list = LockedDummyNode::new(Tracked(dummy_token), Tracked(instance.clone()));
 
-    proof {
-        tuple = instance.add_to_dummy_tail(5, dummy_token);
-        new_dummy = tuple.0.get();
-        new_node = tuple.1.get();
-    }
+    let a = NodeData::Node(1);
+    let b = a.get();
+
+    // let tracked tuple;
+    // let tracked new_dummy;
+    // let tracked new_node;
+
+    // proof {
+    //     tuple = instance.add_to_dummy_tail(5, dummy_token);
+    //     new_dummy = tuple.0.get();
+    //     new_node = tuple.1.get();
+    // }
 }
 }

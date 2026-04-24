@@ -417,42 +417,43 @@ fn insert(dummy_node: &LockedDummyNode, insert_data: u32)
 {
     let mut locked_current_node = dummy_node;
     let mut current_node_perm = dummy_node.acquire_lock();
-    let mut current_node = dummy_node.cell.take(Tracked(current_node_perm.borrow_mut()));
+    let mut current_node_view = dummy_node.cell.borrow(Tracked(current_node_perm.borrow_mut()));
 
     // If the next node of the dummy is none, then we just have to insert where we are:
-    if (current_node.next_node.is_none()) {
+    if (current_node_view.next_node.is_none()) {
 
-        let tracked tuple;
-        let tracked head_map_token;
-        let tracked next_node_map_token;
+        // let mut current_node = dummy_node.cell.take(Tracked(current_node_perm.borrow_mut()));
+        // let tracked tuple;
+        // let tracked head_map_token;
+        // let tracked next_node_map_token;
 
-        proof {
-            tuple = dummy_node.instance.borrow().add_to_dummy_tail(insert_data, current_node.map_token.get());
-            head_map_token = tuple.0.get();
-            next_node_map_token = tuple.1.get();
-        }
+        // proof {
+        //     tuple = dummy_node.instance.borrow().add_to_dummy_tail(insert_data, current_node.map_token.get());
+        //     head_map_token = tuple.0.get();
+        //     next_node_map_token = tuple.1.get();
+        // }
 
-        let next_node = LockedNode::new(
-            NodeData::Node(insert_data), 
-            Tracked(next_node_map_token), 
-            None::<Box<LockedNode>>, 
-            dummy_node.instance.clone()
-        );
+        // let next_node = LockedNode::new(
+        //     NodeData::Node(insert_data), 
+        //     Tracked(next_node_map_token), 
+        //     None::<Box<LockedNode>>, 
+        //     dummy_node.instance.clone()
+        // );
 
-        current_node.map_token = Tracked(head_map_token);
-        current_node.next_node = Some(Box::new(next_node));
+        // current_node.map_token = Tracked(head_map_token);
+        // current_node.next_node = Some(Box::new(next_node));
 
-        dummy_node.cell.put(Tracked(current_node_perm.borrow_mut()), current_node);
-        dummy_node.release_lock(current_node_perm);
-        return;
+        // dummy_node.cell.put(Tracked(current_node_perm.borrow_mut()), current_node);
+        // dummy_node.release_lock(current_node_perm);
+        // return;
     } 
     // Otherwise, we need to begin the loop of grabbing the next lock
     else {
         // We want to start from a LockedNode instead of a LockedDummyNode
         // AKA we want to move forward 1 before beginning our loop (for SMT solver)
-        let mut locked_next_node = current_node.next_node.unwrap();
+        let mut locked_next_node = current_node_view.next_node.as_ref().unwrap();
         let mut next_node_perm = locked_next_node.acquire_lock();
-        let mut next_node = locked_next_node.cell.take(Tracked(next_node_perm.borrow_mut()));
+        let mut next_node_view = locked_next_node.cell.borrow(Tracked(next_node_perm.borrow_mut()));
 
         // loop {
         //     // If the next node is none, then we are inserting at the end, but not to the dummy

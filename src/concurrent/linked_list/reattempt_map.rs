@@ -216,7 +216,8 @@ struct_with_invariants!{
                     (points_to.value().map_token@.value().is_none() <==> points_to.value().next_node.is_none()) && 
                     (points_to.value().map_token@.value().is_some() ==> 
                         (
-                            points_to.value().map_token@.value().unwrap() == points_to.value().next_node.unwrap().data_view
+                            points_to.value().map_token@.value().unwrap() == points_to.value().next_node.unwrap().data_view &&
+                            points_to.value().next_node.unwrap().wf()
                         )
                     )
                 }
@@ -253,7 +254,8 @@ impl LockedDummyNode {
             (points_to@.value().map_token@.value().is_none() <==> points_to@.value().next_node.is_none()), 
             (points_to@.value().map_token@.value().is_some() ==> 
                 (
-                    points_to@.value().map_token@.value().unwrap() == points_to@.value().next_node.unwrap().data_view
+                    points_to@.value().map_token@.value().unwrap() == points_to@.value().next_node.unwrap().data_view &&
+                    points_to@.value().next_node.unwrap().wf()
                 )
             ),
             self.wf()
@@ -285,7 +287,8 @@ impl LockedDummyNode {
             (points_to@.value().map_token@.value().is_none() <==> points_to@.value().next_node.is_none()), 
             (points_to@.value().map_token@.value().is_some() ==> 
                 (
-                    points_to@.value().map_token@.value().unwrap() == points_to@.value().next_node.unwrap().data_view
+                    points_to@.value().map_token@.value().unwrap() == points_to@.value().next_node.unwrap().data_view &&
+                    points_to@.value().next_node.unwrap().wf()
                 )
             ),
         ensures

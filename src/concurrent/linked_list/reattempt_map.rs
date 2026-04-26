@@ -3,6 +3,7 @@ use verus_state_machines_macros::tokenized_state_machine;
 use verus_builtin::*;
 use verus_builtin_macros::*;
 use std::sync::Arc;
+use std::cmp::Ordering;
 use vstd::atomic_ghost::*;
 use vstd::modes::*;
 use vstd::prelude::*;
@@ -37,6 +38,17 @@ impl NodeData {
         match self {
             NodeData::Node(i) => *i,
             _ => u32::MIN
+        }
+    }
+}
+
+impl NodeData {
+    pub open spec fn spec_lt(self, other: Self) -> bool {
+        match (self, other) {
+            (NodeData::Dummy, NodeData::Dummy) => false,
+            (NodeData::Dummy, _) => true,
+            (_, NodeData::Dummy) => false,
+            (NodeData::Node(a), NodeData::Node(b)) => a < b,
         }
     }
 }
@@ -348,12 +360,17 @@ impl LockedNode {
             map_token@.instance_id() == instance@.id(),
             map_token@.key() == data,
             map_token@.value().is_none() <==> next_node.is_none(),
-            map_token@.value().is_some() ==>
-                map_token@.value().unwrap() == next_node.unwrap().data_view
+            map_token@.value().is_some() ==> (
+                map_token@.value().unwrap() == next_node.unwrap().data_view &&
+                next_node.unwrap().wf()
+            )
         ensures 
             new_node.wf(),
             new_node.instance == instance,
             new_node.data_view == data,
+            next_node.is_some() ==> (
+                next_node.unwrap().wf()
+            )
     {   
         let data_view = data.clone();
         let node = Node { data, next_node, map_token };
@@ -375,7 +392,8 @@ impl LockedNode {
             (points_to@.value().map_token@.value().is_none() <==> points_to@.value().next_node.is_none()), 
             (points_to@.value().map_token@.value().is_some() ==> 
                 (
-                    points_to@.value().map_token@.value().unwrap() == points_to@.value().next_node.unwrap().data_view
+                    points_to@.value().map_token@.value().unwrap() == points_to@.value().next_node.unwrap().data_view &&
+                    points_to@.value().next_node.unwrap().wf()
                 )
             ),
             self.wf()
@@ -408,7 +426,8 @@ impl LockedNode {
             (points_to@.value().map_token@.value().is_none() <==> points_to@.value().next_node.is_none()), 
             (points_to@.value().map_token@.value().is_some() ==> 
                 (
-                    points_to@.value().map_token@.value().unwrap() == points_to@.value().next_node.unwrap().data_view
+                    points_to@.value().map_token@.value().unwrap() == points_to@.value().next_node.unwrap().data_view &&
+                    points_to@.value().next_node.unwrap().wf()
                 )
             ),
         ensures

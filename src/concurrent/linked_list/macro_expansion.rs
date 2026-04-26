@@ -148,16 +148,16 @@ tokenized_state_machine!{
 pub struct LockedNodePredicate;
 
 impl AtomicInvariantPredicate<
-    (PCell<Node>, machine::Instance, NodeData),
+    (PCell<Node>, machine::Instance, NodeData, nat),
     bool,
     Option<cell::PointsTo<Node>>,
 > for LockedNodePredicate {
     open spec fn atomic_inv(
-        k: (PCell<Node>, machine::Instance, NodeData),
+        k: (PCell<Node>, machine::Instance, NodeData, nat),
         v: bool,
         g: Option<cell::PointsTo<Node>>,
     ) -> bool {
-        node_invariant(k.0, k.1, k.2, v, g)
+        node_invariant(k.0, k.1, k.2, k.3, v, g)
     }
 }
 
@@ -165,9 +165,12 @@ pub open spec fn node_invariant(
     cell: PCell<Node>,
     instance: machine::Instance,
     data_view: NodeData,
+    node_id: nat,
     v: bool,
     g: Option<cell::PointsTo<Node>>
-) -> bool {
+) -> bool 
+    decreases node_id
+{
     match g {
         None => v == true,
         Some(points_to) => {
@@ -181,6 +184,8 @@ pub open spec fn node_invariant(
             (points_to.value().map_token@.value().is_none() <==> points_to.value().next_node.is_none()) && 
             (points_to.value().map_token@.value().is_some() ==> 
                 (
+                    node_id > 0 && 
+                    points_to.value().next_node.unwrap().node_id < node_id &&
                     points_to.value().map_token@.value().unwrap() == points_to.value().next_node.unwrap().data_view &&
                     points_to.value().next_node.unwrap().wf()
                 )
@@ -191,18 +196,21 @@ pub open spec fn node_invariant(
 
 pub struct LockedNode {
     pub atomic: AtomicBool<
-        (PCell<Node>, machine::Instance, NodeData), 
+        (PCell<Node>, machine::Instance, NodeData, nat), 
         Option<cell::PointsTo<Node>>, 
         LockedNodePredicate
     >,
     pub cell: PCell<Node>,
     pub instance: Tracked<machine::Instance>,
     pub data_view: NodeData,
+    pub ghost node_id: nat,
 }
 
 impl LockedNode {
-    pub open spec fn wf(&self) -> bool {
-        self.atomic.constant() == (self.cell, self.instance@, self.data_view)
+    pub open spec fn wf(&self) -> bool 
+        decreases self.node_id
+    {
+        self.atomic.constant() == (self.cell, self.instance@, self.data_view, self.node_id)
     }
 }
 

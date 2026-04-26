@@ -196,7 +196,10 @@ pub open spec fn node_invariant(
 
 
             (next_perm.is_some() ==> {
-                let next_locked_node = content_perm.value().next_node.unwrap().view(next_perm.unwrap());
+                let next_perm_inner = next_perm.unwrap();
+                let next_locked_node = next_perm_inner.value();
+                
+                content_perm.value().next_node.unwrap().addr() == next_perm_inner.addr() &&
                 node_id > 0 &&
                 next_locked_node.node_id < node_id &&
                 next_locked_node.wf()
@@ -208,7 +211,7 @@ pub open spec fn node_invariant(
 pub struct LockedNode {
     pub atomic: AtomicBool<
         (PCell<NodeContent>, machine::Instance, NodeData, nat), 
-        Option<cell::PointsTo<NodeContent>>, 
+        NodeGhost, 
         LockedNodePredicate
     >,
     pub cell: PCell<NodeContent>,

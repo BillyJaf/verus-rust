@@ -10,7 +10,6 @@ use vstd::prelude::*;
 use vstd::thread::*;
 use vstd::{pervasive::*, prelude::*, *};
 use vstd::cell::*;
-use vstd::simple_pptr::*;
 
 verus! {
 
@@ -146,84 +145,81 @@ tokenized_state_machine!{
     }
 }
 
-pub struct NodeContent {
-    pub data: NodeData,
-    pub next_node: Option<PPtr<LockedNode>>,
-    pub map_token: Tracked<machine::nodes>
-}
-
-pub type NodeGhost = Option<(cell::PointsTo<NodeContent>, Option<simple_pptr::PointsTo<LockedNode>>)>;
-
 pub struct LockedNodePredicate;
 
 impl AtomicInvariantPredicate<
-    (PCell<NodeContent>, machine::Instance, NodeData, nat),
+    (PCell<Node>, machine::Instance, NodeData, nat),
     bool,
-    NodeGhost,
+    Option<cell::PointsTo<Node>>,
 > for LockedNodePredicate {
     open spec fn atomic_inv(
-        k: (PCell<NodeContent>, machine::Instance, NodeData, nat),
+        k: (PCell<Node>, machine::Instance, NodeData, nat),
         v: bool,
-        g: NodeGhost,
-    ) -> bool {
+        g: Option<cell::PointsTo<Node>>,
+    ) -> bool 
+        decreases k.3
+    {
         node_invariant(k.0, k.1, k.2, k.3, v, g)
     }
 }
 
 pub open spec fn node_invariant(
-    cell: PCell<NodeContent>,
+    cell: PCell<Node>,
     instance: machine::Instance,
     data_view: NodeData,
     node_id: nat,
     v: bool,
-    g: NodeGhost
+    g: Option<cell::PointsTo<Node>>
 ) -> bool 
     decreases node_id
 {
     match g {
         None => v == true,
-        Some((content_perm, next_perm)) => {
+        Some(points_to) => {
             v == false &&
-            content_perm.id() == cell.id() &&
-            content_perm.is_init() &&
-            content_perm.value().data == data_view &&
-            content_perm.value().data != NodeData::Dummy &&
-            content_perm.value().map_token@.instance_id() == instance.id() &&
-            content_perm.value().map_token@.key() == content_perm.value().data &&
-
-
-            (content_perm.value().next_node.is_none() <==> next_perm.is_none()) && 
-
-
-            (next_perm.is_some() ==> {
-                let next_perm_inner = next_perm.unwrap();
-                let next_locked_node = next_perm_inner.value();
-                
-                content_perm.value().next_node.unwrap().addr() == next_perm_inner.addr() &&
-                node_id > 0 &&
-                next_locked_node.node_id < node_id &&
-                next_locked_node.wf()
-            })
+            points_to.id() == cell.id() &&
+            points_to.is_init() &&
+            points_to.value().data == data_view &&
+            points_to.value().data != NodeData::Dummy &&
+            points_to.value().map_token@.instance_id() == instance.id() &&
+            points_to.value().map_token@.key() == points_to.value().data &&
+            (points_to.value().map_token@.value().is_none() <==> points_to.value().next_node.is_none()) && 
+            (points_to.value().map_token@.value().is_some() ==> 
+                (
+                    node_id > 0 && 
+                    points_to.value().next_node.unwrap().node_id < node_id &&
+                    points_to.value().map_token@.value().unwrap() == points_to.value().next_node.unwrap().data_view &&
+                    points_to.value().next_node.unwrap().wf()
+                )
+            )
         }
     }
 }
 
 pub struct LockedNode {
     pub atomic: AtomicBool<
-        (PCell<NodeContent>, machine::Instance, NodeData, nat), 
-        NodeGhost, 
+        (PCell<Node>, machine::Instance, NodeData, nat), 
+        Option<cell::PointsTo<Node>>, 
         LockedNodePredicate
     >,
-    pub cell: PCell<NodeContent>,
+    pub cell: PCell<Node>,
     pub instance: Tracked<machine::Instance>,
     pub data_view: NodeData,
     pub ghost node_id: nat,
 }
 
 impl LockedNode {
-    pub open spec fn wf(&self) -> bool {
+    pub open spec fn wf(&self) -> bool 
+        decreases node_id
+    {
         self.atomic.constant() == (self.cell, self.instance@, self.data_view, self.node_id)
     }
+}
+
+pub struct Node {
+    pub data: NodeData,
+    pub next_node: Option<Box<LockedNode>>,
+    pub map_token: Tracked<machine::nodes>
 }
 
 fn main() {

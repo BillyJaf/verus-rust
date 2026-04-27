@@ -8,7 +8,7 @@ use vstd::modes::*;
 use vstd::prelude::*;
 use vstd::thread::*;
 use vstd::{pervasive::*, prelude::*, *};
-use vstd::cell::PCell;
+use vstd::cell::pcell::PCell;
 
 verus! {
 

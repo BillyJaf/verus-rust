@@ -1,2 +1,2 @@
 #[verifier::verify]
-pub mod macro_expansion;
+pub mod simple_example;

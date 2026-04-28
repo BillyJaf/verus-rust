@@ -443,43 +443,54 @@ impl LockedNode {
     }
 }
 
-fn insert(dummy_node: &LockedDummyNode, insert_data: u32)
+fn insert(locked_dummy_node: &LockedDummyNode, insert_data: u32)
     requires
-        dummy_node.wf()
+        locked_dummy_node.wf()
     ensures
-        dummy_node.wf()
+        locked_dummy_node.wf()
 {
-    let mut locked_current_node = dummy_node;
-    let mut current_node_perm = dummy_node.acquire_lock();
-    let mut current_node_view = dummy_node.cell.borrow(Tracked(current_node_perm.borrow_mut()));
+    let mut locked_current_node = locked_dummy_node;
+    let mut current_node_perm = locked_dummy_node.acquire_lock();
+    let mut current_node_view = locked_dummy_node.cell.borrow(Tracked(current_node_perm.borrow_mut()));
 
     // If the next node of the dummy is none, then we just have to insert where we are:
     if (current_node_view.next_node.is_none()) {
 
-        // let mut current_node = dummy_node.cell.take(Tracked(current_node_perm.borrow_mut()));
-        // let tracked tuple;
-        // let tracked head_map_token;
-        // let tracked next_node_map_token;
+        let temp_dummy_node = DummyNode {
+            data: NodeData::Dummy,
+            next_node: None,
+            map_token: None
+        };
 
-        // proof {
-        //     tuple = dummy_node.instance.borrow().add_to_dummy_tail(insert_data, current_node.map_token.get());
-        //     head_map_token = tuple.0.get();
-        //     next_node_map_token = tuple.1.get();
-        // }
+        let mut dummy_node = locked_dummy_node.cell.replace(Tracked(current_node_perm.borrow_mut()), temp_dummy_node);
+        let old_dummy_node_token = dummy_node.map_token.unwrap();
 
-        // let next_node = LockedNode::new(
-        //     NodeData::Node(insert_data), 
-        //     Tracked(next_node_map_token), 
-        //     None::<Box<LockedNode>>, 
-        //     dummy_node.instance.clone()
-        // );
+        let tracked tuple;
+        let tracked updated_dummy_node_token;
+        let tracked new_node_token;
 
-        // current_node.map_token = Tracked(head_map_token);
-        // current_node.next_node = Some(Box::new(next_node));
+        proof {
+            tuple = locked_dummy_node.instance.borrow().add_to_dummy_tail(insert_data, old_dummy_node_token.get());
+            updated_dummy_node_token = tuple.0.get();
+            new_node_token = tuple.1.get();
+        }
 
-        // dummy_node.cell.put(Tracked(current_node_perm.borrow_mut()), current_node);
-        // dummy_node.release_lock(current_node_perm);
-        // return;
+        let next_locked_node = LockedNode::new(
+            NodeData::Node(insert_data), 
+            Tracked(new_node_token), 
+            None::<Box<LockedNode>>, 
+            locked_dummy_node.instance.clone()
+        );
+
+        let dummy_node = DummyNode {
+            data: NodeData::Dummy,
+            next_node: Some(Box::new(next_locked_node)),
+            map_token: Some(Tracked(updated_dummy_node_token))
+        };
+
+        locked_dummy_node.cell.replace(Tracked(current_node_perm.borrow_mut()), dummy_node);
+        locked_dummy_node.release_lock(current_node_perm);
+        return;
     } 
     // Otherwise, we need to begin the loop of grabbing the next lock
     else {
@@ -551,7 +562,6 @@ fn main() {
 
     let linked_list = LockedDummyNode::new(Tracked(dummy_token), Tracked(instance.clone()));
 
-    let a = NodeData::Node(1);
-    let b = a.get();
+    insert(&linked_list, 1);
 }
 }

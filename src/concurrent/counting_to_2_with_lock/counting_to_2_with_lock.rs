@@ -297,8 +297,7 @@ fn main() {
     let mut cwp = global_arc.cell.replace(Tracked(perm.borrow_mut()), empty_cwp); 
 
     let val = cwp.val;
-    let ghost_token_wrapped = cwp.ghost_token;
-    let ghost_token = ghost_token_wrapped.unwrap();
+    let ghost_token = cwp.ghost_token.unwrap();
 
     proof {
         global_arc.instance.borrow().finalize(ghost_token.borrow(), &inc_a_token, &inc_b_token);

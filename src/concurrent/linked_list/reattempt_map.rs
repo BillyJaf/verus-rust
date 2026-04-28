@@ -9,7 +9,7 @@ use vstd::modes::*;
 use vstd::prelude::*;
 use vstd::thread::*;
 use vstd::{pervasive::*, prelude::*, *};
-use vstd::cell::*;
+use vstd::cell::pcell;
 
 verus! {
 
@@ -203,32 +203,32 @@ tokenized_state_machine!{
 pub struct DummyNode {
     pub data: NodeData,
     pub next_node: Option<Box<LockedNode>>,
-    pub map_token: Tracked<machine::nodes>
+    pub map_token: Option<Tracked<machine::nodes>>
 }
 
 struct_with_invariants!{
     pub struct LockedDummyNode {
-        pub atomic: AtomicBool<_, Option<cell::PointsTo<DummyNode>>, _>,
-        pub cell: PCell<DummyNode>,
+        pub atomic: AtomicBool<_, Option<pcell::PointsTo<DummyNode>>, _>,
+        pub cell: pcell::PCell<DummyNode>,
         pub instance: Tracked<machine::Instance>,
     }
 
     spec fn wf(&self) -> bool 
     {
-        invariant on atomic with (cell, instance) is (v: bool, g: Option<cell::PointsTo<DummyNode>>) {
+        invariant on atomic with (cell, instance) is (v: bool, g: Option<pcell::PointsTo<DummyNode>>) {
             match g {
                 None => v == true,
                 Some(points_to) => {
                     v == false &&
                     points_to.id() == cell.id() &&
-                    points_to.is_init() &&
                     points_to.value().data == NodeData::Dummy &&
-                    points_to.value().map_token@.instance_id() == instance@.id() && 
-                    points_to.value().map_token@.key() == NodeData::Dummy &&
-                    (points_to.value().map_token@.value().is_none() <==> points_to.value().next_node.is_none()) && 
-                    (points_to.value().map_token@.value().is_some() ==> 
+                    points_to.value().map_token.is_some() &&
+                    points_to.value().map_token.unwrap()@.instance_id() == instance@.id() && 
+                    points_to.value().map_token.unwrap()@.key() == NodeData::Dummy &&
+                    (points_to.value().map_token.unwrap()@.value().is_none() <==> points_to.value().next_node.is_none()) && 
+                    (points_to.value().map_token.unwrap()@.value().is_some() ==> 
                         (
-                            points_to.value().map_token@.value().unwrap() == points_to.value().next_node.unwrap().data_view &&
+                            points_to.value().map_token.unwrap()@.value().unwrap() == points_to.value().next_node.unwrap().data_view &&
                             points_to.value().next_node.unwrap().wf()
                         )
                     )
@@ -248,25 +248,25 @@ impl LockedDummyNode {
             dummy_node.wf(),
             dummy_node.instance == instance,
     {
-        let node = DummyNode { data: NodeData::Dummy, next_node: None::<Box<LockedNode>>, map_token};
-        let (cell, Tracked(perm)) = PCell::new(node);
+        let node = DummyNode { data: NodeData::Dummy, next_node: None::<Box<LockedNode>>, map_token: Some(map_token)};
+        let (cell, Tracked(perm)) = pcell::PCell::new(node);
         let atomic = AtomicBool::new(Ghost((cell, instance)), false, Tracked(Some(perm)));
         Self { atomic, cell, instance }
     }
 
-    fn acquire_lock(&self) -> (points_to: Tracked<cell::PointsTo<DummyNode>>)
+    fn acquire_lock(&self) -> (points_to: Tracked<pcell::PointsTo<DummyNode>>)
         requires 
             self.wf(),
         ensures 
             points_to@.id() == self.cell.id(),
-            points_to@.is_init(),
             points_to@.value().data == NodeData::Dummy,
-            points_to@.value().map_token@.instance_id() == self.instance@.id(),
-            points_to@.value().map_token@.key() == NodeData::Dummy,
-            (points_to@.value().map_token@.value().is_none() <==> points_to@.value().next_node.is_none()), 
-            (points_to@.value().map_token@.value().is_some() ==> 
+            points_to@.value().map_token.is_some(),
+            points_to@.value().map_token.unwrap()@.instance_id() == self.instance@.id(),
+            points_to@.value().map_token.unwrap()@.key() == NodeData::Dummy,
+            (points_to@.value().map_token.unwrap()@.value().is_none() <==> points_to@.value().next_node.is_none()), 
+            (points_to@.value().map_token.unwrap()@.value().is_some() ==> 
                 (
-                    points_to@.value().map_token@.value().unwrap() == points_to@.value().next_node.unwrap().data_view &&
+                    points_to@.value().map_token.unwrap()@.value().unwrap() == points_to@.value().next_node.unwrap().data_view &&
                     points_to@.value().next_node.unwrap().wf()
                 )
             ),
@@ -288,18 +288,18 @@ impl LockedDummyNode {
         }
     }
 
-    fn release_lock(&self, points_to: Tracked<cell::PointsTo<DummyNode>>)
+    fn release_lock(&self, points_to: Tracked<pcell::PointsTo<DummyNode>>)
         requires
             self.wf(),
             points_to@.id() == self.cell.id(),
-            points_to@.is_init(),
             points_to@.value().data == NodeData::Dummy,
-            points_to@.value().map_token@.instance_id() == self.instance@.id(),
-            points_to@.value().map_token@.key() == NodeData::Dummy,
-            (points_to@.value().map_token@.value().is_none() <==> points_to@.value().next_node.is_none()), 
-            (points_to@.value().map_token@.value().is_some() ==> 
+            points_to@.value().map_token.is_some(),
+            points_to@.value().map_token.unwrap()@.instance_id() == self.instance@.id(),
+            points_to@.value().map_token.unwrap()@.key() == NodeData::Dummy,
+            (points_to@.value().map_token.unwrap()@.value().is_none() <==> points_to@.value().next_node.is_none()), 
+            (points_to@.value().map_token.unwrap()@.value().is_some() ==> 
                 (
-                    points_to@.value().map_token@.value().unwrap() == points_to@.value().next_node.unwrap().data_view &&
+                    points_to@.value().map_token.unwrap()@.value().unwrap() == points_to@.value().next_node.unwrap().data_view &&
                     points_to@.value().next_node.unwrap().wf()
                 )
             ),
@@ -318,33 +318,33 @@ impl LockedDummyNode {
 pub struct Node {
     pub data: NodeData,
     pub next_node: Option<Box<LockedNode>>,
-    pub map_token: Tracked<machine::nodes>
+    pub map_token: Option<Tracked<machine::nodes>>
 }
 
 struct_with_invariants!{
     pub struct LockedNode {
-        pub atomic: AtomicBool<_, Option<cell::PointsTo<Node>>, _>,
-        pub cell: PCell<Node>,
+        pub atomic: AtomicBool<_, Option<pcell::PointsTo<Node>>, _>,
+        pub cell: pcell::PCell<Node>,
         pub instance: Tracked<machine::Instance>,
         pub data_view: NodeData,
     }
 
     pub open spec fn wf(&self) -> bool {
-        invariant on atomic with (cell, instance, data_view) is (v: bool, g: Option<cell::PointsTo<Node>>) {
+        invariant on atomic with (cell, instance, data_view) is (v: bool, g: Option<pcell::PointsTo<Node>>) {
             match g {
                 None => v == true,
                 Some(points_to) => {
                     v == false &&
                     points_to.id() == cell.id() &&
-                    points_to.is_init() &&
                     points_to.value().data == data_view &&
                     points_to.value().data != NodeData::Dummy &&
-                    points_to.value().map_token@.instance_id() == instance@.id() &&
-                    points_to.value().map_token@.key() == points_to.value().data &&
-                    (points_to.value().map_token@.value().is_none() <==> points_to.value().next_node.is_none()) && 
-                    (points_to.value().map_token@.value().is_some() ==> 
+                    points_to.value().map_token.is_some() &&
+                    points_to.value().map_token.unwrap()@.instance_id() == instance@.id() &&
+                    points_to.value().map_token.unwrap()@.key() == points_to.value().data &&
+                    (points_to.value().map_token.unwrap()@.value().is_none() <==> points_to.value().next_node.is_none()) && 
+                    (points_to.value().map_token.unwrap()@.value().is_some() ==> 
                         (
-                            points_to.value().map_token@.value().unwrap() == points_to.value().next_node.unwrap().data_view &&
+                            points_to.value().map_token.unwrap()@.value().unwrap() == points_to.value().next_node.unwrap().data_view &&
                             points_to.value().next_node.unwrap().wf()
                         )
                     )
@@ -374,26 +374,26 @@ impl LockedNode {
             )
     {   
         let data_view = data.clone();
-        let node = Node { data, next_node, map_token };
-        let (cell, Tracked(perm)) = PCell::new(node);
+        let node = Node { data, next_node, map_token: Some(map_token) };
+        let (cell, Tracked(perm)) = pcell::PCell::new(node);
         let atomic = AtomicBool::new(Ghost((cell, instance, data_view)), false, Tracked(Some(perm)));
         Self { atomic, cell, instance, data_view }
     }
 
-    fn acquire_lock(&self) -> (points_to: Tracked<cell::PointsTo<Node>>)
+    fn acquire_lock(&self) -> (points_to: Tracked<pcell::PointsTo<Node>>)
         requires 
             self.wf(),
         ensures 
             points_to@.id() == self.cell.id(),
-            points_to@.is_init(),
             points_to@.value().data == self.data_view,
             points_to@.value().data != NodeData::Dummy,
-            points_to@.value().map_token@.instance_id() == self.instance@.id(),
-            points_to@.value().map_token@.key() == points_to@.value().data,
-            (points_to@.value().map_token@.value().is_none() <==> points_to@.value().next_node.is_none()), 
-            (points_to@.value().map_token@.value().is_some() ==> 
+            points_to@.value().map_token.is_some(),
+            points_to@.value().map_token.unwrap()@.instance_id() == self.instance@.id(),
+            points_to@.value().map_token.unwrap()@.key() == points_to@.value().data,
+            (points_to@.value().map_token.unwrap()@.value().is_none() <==> points_to@.value().next_node.is_none()), 
+            (points_to@.value().map_token.unwrap()@.value().is_some() ==> 
                 (
-                    points_to@.value().map_token@.value().unwrap() == points_to@.value().next_node.unwrap().data_view &&
+                    points_to@.value().map_token.unwrap()@.value().unwrap() == points_to@.value().next_node.unwrap().data_view &&
                     points_to@.value().next_node.unwrap().wf()
                 )
             ),
@@ -415,19 +415,19 @@ impl LockedNode {
         }
     }
 
-    fn release_lock(&self, points_to: Tracked<cell::PointsTo<Node>>)
+    fn release_lock(&self, points_to: Tracked<pcell::PointsTo<Node>>)
         requires
             self.wf(),
             points_to@.id() == self.cell.id(),
-            points_to@.is_init(),
             points_to@.value().data == self.data_view,
             points_to@.value().data != NodeData::Dummy,
-            points_to@.value().map_token@.instance_id() == self.instance@.id(),
-            points_to@.value().map_token@.key() == points_to@.value().data,
-            (points_to@.value().map_token@.value().is_none() <==> points_to@.value().next_node.is_none()), 
-            (points_to@.value().map_token@.value().is_some() ==> 
+            points_to@.value().map_token.is_some(),
+            points_to@.value().map_token.unwrap()@.instance_id() == self.instance@.id(),
+            points_to@.value().map_token.unwrap()@.key() == points_to@.value().data,
+            (points_to@.value().map_token.unwrap()@.value().is_none() <==> points_to@.value().next_node.is_none()), 
+            (points_to@.value().map_token.unwrap()@.value().is_some() ==> 
                 (
-                    points_to@.value().map_token@.value().unwrap() == points_to@.value().next_node.unwrap().data_view &&
+                    points_to@.value().map_token.unwrap()@.value().unwrap() == points_to@.value().next_node.unwrap().data_view &&
                     points_to@.value().next_node.unwrap().wf()
                 )
             ),

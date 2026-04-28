@@ -168,12 +168,22 @@ tokenized_state_machine!{
         }
 
         transition!{
-            insert_node_inbetween(lower_node: u32, upper_node: u32, new_node: u32)
+            insert_node_inbetween_normal_and_normal(lower_node: u32, upper_node: u32, new_node: u32)
             {   
                 require(lower_node < new_node);
                 require(new_node < upper_node);
                 remove nodes -= [NodeData::Node(lower_node) => Some(NodeData::Node(upper_node))];
                 add nodes += [NodeData::Node(lower_node) => Some(NodeData::Node(new_node))];
+                add nodes += [NodeData::Node(new_node) => Some(NodeData::Node(upper_node))];
+            }
+        }
+
+        transition!{
+            insert_node_inbetween_dummy_and_normal(upper_node: u32, new_node: u32)
+            {   
+                require(new_node < upper_node);
+                remove nodes -= [NodeData::Dummy => Some(NodeData::Node(upper_node))];
+                add nodes += [NodeData::Dummy => Some(NodeData::Node(new_node))];
                 add nodes += [NodeData::Node(new_node) => Some(NodeData::Node(upper_node))];
             }
         }
@@ -194,8 +204,12 @@ tokenized_state_machine!{
         fn add_to_node_tail_inductive(pre: Self, post: Self, current_tail: u32, new_tail: u32) { 
         }
 
-        #[inductive(insert_node_inbetween)]
-        fn insert_node_inbetween_inductive(pre: Self, post: Self, lower_node: u32, upper_node: u32, new_node: u32) { 
+        #[inductive(insert_node_inbetween_normal_and_normal)]
+        fn insert_node_inbetween_normal_and_normal_inductive(pre: Self, post: Self, lower_node: u32, upper_node: u32, new_node: u32) { 
+        }
+
+        #[inductive(insert_node_inbetween_dummy_and_normal)]
+        fn insert_node_inbetween_dummy_and_normal_inductive(pre: Self, post: Self, upper_node: u32, new_node: u32) { 
         }
     }
 }
@@ -498,25 +512,28 @@ fn insert(locked_dummy_node: &LockedDummyNode, insert_data: u32)
         // AKA we want to move forward 1 before beginning our loop (for SMT solver)
         let mut current_locked_node = dummy_node_view.next_node.as_ref().unwrap().clone();
         let mut current_node_perm = current_locked_node.acquire_lock();
-        let mut current_node_view = current_locked_node.cell.borrow(Tracked(current_node_perm.borrow_mut()));
+        // Indent so that the view is dropped before the loop
+        // We want a fresh view every loop.
+        {
+            let mut current_node_view = current_locked_node.cell.borrow(Tracked(current_node_perm.borrow_mut()));
 
-        // Check if we already have this node:
-        if (current_node_view.data.get() == insert_data) {
-            locked_dummy_node.release_lock(dummy_node_perm);
-            current_locked_node.release_lock(current_node_perm);
-            return;
-        }
-        // Check if we need to insert inbetween dummy and first node:
-        if (current_node_view.data.get() > insert_data) {
-            // Insert inbetween dummy and normal.
-            locked_dummy_node.release_lock(dummy_node_perm);
-            current_locked_node.release_lock(current_node_perm);
-            return;
-        }
+            // Check if we already have this node:
+            if (current_node_view.data.get() == insert_data) {
+                locked_dummy_node.release_lock(dummy_node_perm);
+                current_locked_node.release_lock(current_node_perm);
+                return;
+            }
+            // Check if we need to insert inbetween dummy and first node:
+            if (current_node_view.data.get() > insert_data) {
+                // Insert inbetween dummy and normal.
+                locked_dummy_node.release_lock(dummy_node_perm);
+                current_locked_node.release_lock(current_node_perm);
+                return;
+            }
 
-        // And release the dummy node lock
-        locked_dummy_node.release_lock(dummy_node_perm);
-        // current_locked_node.release_lock(current_node_perm);
+            // And release the dummy node lock
+            locked_dummy_node.release_lock(dummy_node_perm);
+        }
 
 
         // Now we begin our traversal.
@@ -538,6 +555,7 @@ fn insert(locked_dummy_node: &LockedDummyNode, insert_data: u32)
                     )
                 ),
         {
+            let mut current_node_view = current_locked_node.cell.borrow(Tracked(current_node_perm.borrow_mut()));
             // Traversal loop:
             if (current_node_view.next_node.is_none()) {
                 // Insert at end.
@@ -548,7 +566,7 @@ fn insert(locked_dummy_node: &LockedDummyNode, insert_data: u32)
             else {
                 let mut next_locked_node = current_node_view.next_node.as_ref().unwrap().clone();
                 let mut next_node_perm = next_locked_node.acquire_lock();
-                let mut next_node_view = next_locked_node.cell.borrow(Tracked(next_node_perm.borrow_mut()));
+                let next_node_view = next_locked_node.cell.borrow(Tracked(next_node_perm.borrow_mut()));
 
                 // Check if we already have the node:
                 if (next_node_view.data.get() == insert_data) {
@@ -567,7 +585,6 @@ fn insert(locked_dummy_node: &LockedDummyNode, insert_data: u32)
                 
                 current_locked_node.release_lock(current_node_perm);
 
-                current_node_view = next_node_view;
                 current_locked_node = next_locked_node;
                 current_node_perm = next_node_perm;
             }

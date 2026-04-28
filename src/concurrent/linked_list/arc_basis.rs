@@ -202,7 +202,7 @@ tokenized_state_machine!{
 
 pub struct DummyNode {
     pub data: NodeData,
-    pub next_node: Option<Box<LockedNode>>,
+    pub next_node: Option<Arc<LockedNode>>,
     pub map_token: Option<Tracked<machine::nodes>>
 }
 
@@ -248,7 +248,7 @@ impl LockedDummyNode {
             dummy_node.wf(),
             dummy_node.instance == instance,
     {
-        let node = DummyNode { data: NodeData::Dummy, next_node: None::<Box<LockedNode>>, map_token: Some(map_token)};
+        let node = DummyNode { data: NodeData::Dummy, next_node: None::<Arc<LockedNode>>, map_token: Some(map_token)};
         let (cell, Tracked(perm)) = pcell::PCell::new(node);
         let atomic = AtomicBool::new(Ghost((cell, instance)), false, Tracked(Some(perm)));
         Self { atomic, cell, instance }
@@ -317,7 +317,7 @@ impl LockedDummyNode {
 
 pub struct Node {
     pub data: NodeData,
-    pub next_node: Option<Box<LockedNode>>,
+    pub next_node: Option<Arc<LockedNode>>,
     pub map_token: Option<Tracked<machine::nodes>>
 }
 
@@ -355,7 +355,7 @@ struct_with_invariants!{
 }
 
 impl LockedNode {
-    fn new(data: NodeData, map_token: Tracked<machine::nodes>, next_node: Option<Box<LockedNode>>, instance: Tracked<machine::Instance>) -> (new_node: Self)
+    fn new(data: NodeData, map_token: Tracked<machine::nodes>, next_node: Option<Arc<LockedNode>>, instance: Tracked<machine::Instance>) -> (new_node: Self)
         requires
             data != NodeData::Dummy,
             map_token@.instance_id() == instance@.id(),
@@ -443,110 +443,6 @@ impl LockedNode {
     }
 }
 
-fn insert(locked_dummy_node: &LockedDummyNode, insert_data: u32)
-    requires
-        locked_dummy_node.wf()
-    ensures
-        locked_dummy_node.wf()
-{
-    let mut locked_current_node = locked_dummy_node;
-    let mut current_node_perm = locked_dummy_node.acquire_lock();
-    let mut current_node_view = locked_dummy_node.cell.borrow(Tracked(current_node_perm.borrow_mut()));
-
-    // If the next node of the dummy is none, then we just have to insert where we are:
-    if (current_node_view.next_node.is_none()) {
-
-        let temp_dummy_node = DummyNode {
-            data: NodeData::Dummy,
-            next_node: None,
-            map_token: None
-        };
-
-        let mut dummy_node = locked_dummy_node.cell.replace(Tracked(current_node_perm.borrow_mut()), temp_dummy_node);
-        let old_dummy_node_token = dummy_node.map_token.unwrap();
-
-        let tracked tuple;
-        let tracked updated_dummy_node_token;
-        let tracked new_node_token;
-
-        proof {
-            tuple = locked_dummy_node.instance.borrow().add_to_dummy_tail(insert_data, old_dummy_node_token.get());
-            updated_dummy_node_token = tuple.0.get();
-            new_node_token = tuple.1.get();
-        }
-
-        let next_locked_node = LockedNode::new(
-            NodeData::Node(insert_data), 
-            Tracked(new_node_token), 
-            None::<Box<LockedNode>>, 
-            locked_dummy_node.instance.clone()
-        );
-
-        let dummy_node = DummyNode {
-            data: NodeData::Dummy,
-            next_node: Some(Box::new(next_locked_node)),
-            map_token: Some(Tracked(updated_dummy_node_token))
-        };
-
-        locked_dummy_node.cell.replace(Tracked(current_node_perm.borrow_mut()), dummy_node);
-        locked_dummy_node.release_lock(current_node_perm);
-        return;
-    } 
-    // Otherwise, we need to begin the loop of grabbing the next lock
-    else {
-        // We want to start from a LockedNode instead of a LockedDummyNode
-        // AKA we want to move forward 1 before beginning our loop (for SMT solver)
-        let mut locked_next_node = current_node_view.next_node.as_ref().unwrap();
-        let mut next_node_perm = locked_next_node.acquire_lock();
-        let mut next_node_view = locked_next_node.cell.borrow(Tracked(next_node_perm.borrow_mut()));
-
-        // loop {
-        //     // If the next node is none, then we are inserting at the end, but not to the dummy
-        //     if (current_node.next_node.is_none()) {
-        //         let tracked tuple;
-        //         let tracked head_map_token;
-        //         let tracked next_node_map_token;
-
-        //         let curr_data = current_node.data.clone().get();
-
-        //         proof {
-        //             tuple = locked_current_node.instance.borrow().add_to_node_tail(curr_data, insert_data, current_node.map_token.get());
-        //             head_map_token = tuple.0.get();
-        //             next_node_map_token = tuple.1.get();
-        //         }
-
-        //         let next_node = LockedNode::new(
-        //             NodeData::Node(insert_data), 
-        //             Tracked(next_node_map_token), 
-        //             None::<Box<LockedNode>>, 
-        //             locked_current_node.instance.clone()
-        //         );
-
-        //         current_node.map_token = Tracked(head_map_token);
-        //         current_node.next_node = Some(Box::new(next_node));
-
-        //         locked_current_node.cell.put(Tracked(current_node_perm.borrow_mut()), current_node);
-        //         locked_current_node.release_lock(current_node_perm);
-        //         return;
-        //     }
-        //     return;
-        // }
-    }
-    // else {
-    //     loop {
-    //         let mut next_node_perm = current_node.next_node.unwrap().acquire_lock();
-    //         let mut next_node = current_node.next_node.unwrap().cell.take(Tracked(next_node_perm.borrow_mut()));
-    //         // if (insert_data < next_node.data.get()) {
-    //         //     // INSERT HERE INBETWEEN
-    //         // } else {
-    //         //     // Keep going, we need to insert the data further in the list:
-    //         //     linked_list_head.cell.put(Tracked(current_node_perm.borrow_mut()), current_node);
-    //         //     linked_list_head.release_lock(current_node_perm);
-    //         // }
-    //     }
-    // }
-}
-
 fn main() {
     let tracked (
         Tracked(instance),
@@ -561,7 +457,5 @@ fn main() {
     }
 
     let linked_list = LockedDummyNode::new(Tracked(dummy_token), Tracked(instance.clone()));
-
-    insert(&linked_list, 1);
 }
 }

@@ -457,7 +457,44 @@ impl LockedNode {
     }
 }
 
-fn insert(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u32)
+fn insert(locked_dummy_node: Arc<LockedDummyNode>, insert_data_list: &[u32]) 
+    requires
+        locked_dummy_node.wf()
+    ensures
+        locked_dummy_node.wf()
+{
+    let mut i = 0;
+    let mut join_handles: Vec<JoinHandle<()>> = Vec::new();
+    while i < insert_data_list.len() 
+        invariant
+            0 <= i <= insert_data_list.len() ,
+            locked_dummy_node.wf(),
+            join_handles.len() == i,
+        decreases
+            insert_data_list.len() - i
+    {
+        let thread_head = locked_dummy_node.clone();
+        let insert_data = insert_data_list[i];
+        let join_handle = spawn(move || insert_thread_routine(thread_head, insert_data));
+        join_handles.push(join_handle);
+        i += 1;
+    }
+
+
+    let mut i = 0;
+    while i < insert_data_list.len() 
+        invariant
+            locked_dummy_node.wf(),
+            join_handles.len() == insert_data_list.len() - i,
+        decreases
+            insert_data_list.len() - i
+    {
+        let _ = join_handles.pop().unwrap().join();
+        i = i + 1;
+    }
+}
+
+fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u32)
     requires
         locked_dummy_node.wf()
     ensures
@@ -711,6 +748,6 @@ fn main() {
 
     let linked_list = Arc::new(LockedDummyNode::new(Tracked(dummy_token), Tracked(instance.clone())));
 
-    insert(linked_list, 1);
+    insert(linked_list, &[5, 4, 3, 2, 1]);
 }
 }

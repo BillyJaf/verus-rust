@@ -572,10 +572,13 @@ fn insert(locked_dummy_node: &LockedDummyNode, insert_data: u32)
 
 
         // Now we begin our traversal.
+        let mut current_node_data = current_locked_node.data_view.get();
         loop 
             invariant
                 locked_dummy_node.wf(),
                 current_locked_node.wf(),
+                NodeData::Node(current_node_data) == current_locked_node.data_view,
+                current_node_data < insert_data,
                 current_node_perm@.id() == current_locked_node.cell.id(),
                 current_node_perm@.value().data == current_locked_node.data_view,
                 current_node_perm@.value().data != NodeData::Dummy,
@@ -594,8 +597,39 @@ fn insert(locked_dummy_node: &LockedDummyNode, insert_data: u32)
             // Traversal loop:
             if (current_node_view.next_node.is_none()) {
                 // Insert at end.
+
+                let temp_tail_node = Node {
+                    data: NodeData::Node(0),
+                    next_node: None,
+                    map_token: None
+                };
+
+                let mut old_tail_node = current_locked_node.cell.replace(Tracked(current_node_perm.borrow_mut()), temp_tail_node);
+                let old_tail_node_token = old_tail_node.map_token.unwrap();
+
+                let tracked tuple;
+                let tracked updated_tail_node_token;
+                let tracked new_tail_node_token;
+
+                proof {
+                    tuple = current_locked_node.instance.borrow().add_to_node_tail(current_node_data, insert_data, old_tail_node_token.get());
+                    updated_tail_node_token = tuple.0.get();
+                    new_tail_node_token = tuple.1.get();
+                }
+
+                let new_tail_node = LockedNode::new(
+                    NodeData::Node(insert_data), 
+                    Tracked(new_tail_node_token), 
+                    None::<Arc<LockedNode>>, 
+                    current_locked_node.instance.clone()
+                );
+
+                old_tail_node.next_node = Some(Arc::new(new_tail_node));
+                old_tail_node.map_token = Some(Tracked(updated_tail_node_token));
+
+                current_locked_node.cell.replace(Tracked(current_node_perm.borrow_mut()), old_tail_node);
                 current_locked_node.release_lock(current_node_perm);
-                break;
+                return;
             } 
             
             else {
@@ -611,7 +645,7 @@ fn insert(locked_dummy_node: &LockedDummyNode, insert_data: u32)
                 } 
 
                 // Check if we need to insert here
-                if (next_node_view.data.get() > insert_data) {
+                if (insert_data < next_node_view.data.get()) {
                     // Insert inbetween two normals.
                     current_locked_node.release_lock(current_node_perm);
                     next_locked_node.release_lock(next_node_perm);
@@ -622,6 +656,7 @@ fn insert(locked_dummy_node: &LockedDummyNode, insert_data: u32)
 
                 current_locked_node = next_locked_node;
                 current_node_perm = next_node_perm;
+                current_node_data = current_locked_node.data_view.get();
             }
         }
     }

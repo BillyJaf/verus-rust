@@ -457,7 +457,7 @@ impl LockedNode {
     }
 }
 
-fn insert(locked_dummy_node: &LockedDummyNode, insert_data: u32)
+fn insert(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u32)
     requires
         locked_dummy_node.wf()
     ensures
@@ -636,22 +636,56 @@ fn insert(locked_dummy_node: &LockedDummyNode, insert_data: u32)
                 let mut next_locked_node = current_node_view.next_node.as_ref().unwrap().clone();
                 let mut next_node_perm = next_locked_node.acquire_lock();
                 let next_node_view = next_locked_node.cell.borrow(Tracked(next_node_perm.borrow_mut()));
+                let next_node_data = next_locked_node.data_view.get();
 
                 // Check if we already have the node:
-                if (next_node_view.data.get() == insert_data) {
+                if (insert_data == next_node_data) {
                     current_locked_node.release_lock(current_node_perm);
                     next_locked_node.release_lock(next_node_perm);
                     return;
                 } 
 
                 // Check if we need to insert here
-                if (insert_data < next_node_view.data.get()) {
+                if (insert_data < next_node_data) {
                     // Insert inbetween two normals.
+                    let temp_lower_node = Node {
+                        data: NodeData::Node(0),
+                        next_node: None,
+                        map_token: None
+                    };
+
+                    let mut lower_node = current_locked_node.cell.replace(Tracked(current_node_perm.borrow_mut()), temp_lower_node);
+                    let old_lower_node_token = lower_node.map_token.unwrap();
+
+                    let tracked tuple;
+                    let tracked updated_lower_node_token;
+                    let tracked new_node_token;
+
+                    proof {
+                        tuple = current_locked_node.instance.borrow().insert_node_inbetween_normal_and_normal(current_node_data, next_node_data, insert_data, old_lower_node_token.get());
+                        updated_lower_node_token = tuple.0.get();
+                        new_node_token = tuple.1.get();
+                    }
+
+                    let new_locked_node = LockedNode::new(
+                        NodeData::Node(insert_data), 
+                        Tracked(new_node_token), 
+                        Some(next_locked_node.clone()), 
+                        current_locked_node.instance.clone()
+                    );
+
+                    lower_node.next_node = Some(Arc::new(new_locked_node));
+                    lower_node.map_token = Some(Tracked(updated_lower_node_token));
+
+                    current_locked_node.cell.replace(Tracked(current_node_perm.borrow_mut()), lower_node);
+
+
                     current_locked_node.release_lock(current_node_perm);
                     next_locked_node.release_lock(next_node_perm);
                     return;
                 } 
-                
+
+                // Otherwise, we give up the previous lock, and loop again!
                 current_locked_node.release_lock(current_node_perm);
 
                 current_locked_node = next_locked_node;
@@ -675,8 +709,8 @@ fn main() {
         dummy_token = instance.add_dummy_node(&mut initialized);
     }
 
-    let linked_list = LockedDummyNode::new(Tracked(dummy_token), Tracked(instance.clone()));
+    let linked_list = Arc::new(LockedDummyNode::new(Tracked(dummy_token), Tracked(instance.clone())));
 
-    insert(&linked_list, 1);
+    insert(linked_list, 1);
 }
 }

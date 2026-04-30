@@ -748,6 +748,17 @@ fn main() {
 
     let linked_list = Arc::new(LockedDummyNode::new(Tracked(dummy_token), Tracked(instance.clone())));
 
-    insert(linked_list, &[5, 4, 3, 2, 1]);
+    insert(linked_list.clone(), &[5, 4, 3, 2, 1]);
+
+    let mut dummy_node_perm = linked_list.acquire_lock();
+    let mut dummy_node_view = linked_list.cell.borrow(Tracked(dummy_node_perm.borrow_mut()));
+
+    let mut current_locked_node = dummy_node_view.next_node.as_ref().unwrap().clone();
+    let mut current_node_perm = current_locked_node.acquire_lock();
+    let mut current_node_view = current_locked_node.cell.borrow(Tracked(current_node_perm.borrow_mut()));
+
+    let current_node_data = current_locked_node.data_view.get();
+
+    assert(current_node_data == 1);
 }
 }

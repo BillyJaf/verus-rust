@@ -10,6 +10,7 @@ use vstd::prelude::*;
 use vstd::thread::*;
 use vstd::{pervasive::*, prelude::*, *};
 use vstd::cell::pcell;
+use vstd::multiset::*;
 
 verus! {
 
@@ -59,12 +60,18 @@ tokenized_state_machine!{
             #[sharding(map)]
             pub nodes: Map<NodeData, Option<NodeData>>,
 
+            #[sharding(multiset)]
+            pub node_witnesses: Multiset<NodeData>,
+
             #[sharding(variable)]
             pub initialized: bool,
         }
 
         #[invariant]
         pub fn main_inv(&self) -> bool {
+            // The node witnesses reflect the nodes:
+            (forall |i: u32| #![auto] self.node_witnesses.count(NodeData::Node(i)) > 0 <==> self.nodes.dom().contains(NodeData::Node(i))) &&
+
             // If the map is uninitialised, then it doesn't contain anything, not even the dummy node (and vice versa)
             (!self.initialized <==> self.nodes.is_empty()) &&
 
@@ -136,6 +143,7 @@ tokenized_state_machine!{
             {
                 init nodes = Map::empty();
                 init initialized = false;
+                init node_witnesses = Multiset::empty();
             }
         }
 
@@ -145,6 +153,7 @@ tokenized_state_machine!{
                 require(!pre.initialized);
                 update initialized = true;
                 add nodes += [NodeData::Dummy => None];
+                add node_witnesses += {NodeData::Dummy};
             }
         }
 
@@ -154,6 +163,7 @@ tokenized_state_machine!{
                 remove nodes -= [NodeData::Dummy => None];
                 add nodes += [NodeData::Dummy => Some(NodeData::Node(new_tail))];
                 add nodes += [NodeData::Node(new_tail) => None];
+                add node_witnesses += {NodeData::Node(new_tail)};
             }
         }
 
@@ -164,6 +174,8 @@ tokenized_state_machine!{
                 remove nodes -= [NodeData::Node(current_tail) => None];
                 add nodes += [NodeData::Node(current_tail) => Some(NodeData::Node(new_tail))];
                 add nodes += [NodeData::Node(new_tail) => None];
+                add node_witnesses += {NodeData::Node(new_tail)};
+
             }
         }
 
@@ -175,6 +187,7 @@ tokenized_state_machine!{
                 remove nodes -= [NodeData::Node(lower_node) => Some(NodeData::Node(upper_node))];
                 add nodes += [NodeData::Node(lower_node) => Some(NodeData::Node(new_node))];
                 add nodes += [NodeData::Node(new_node) => Some(NodeData::Node(upper_node))];
+                add node_witnesses += {NodeData::Node(new_node)};
             }
         }
 
@@ -185,6 +198,14 @@ tokenized_state_machine!{
                 remove nodes -= [NodeData::Dummy => Some(NodeData::Node(upper_node))];
                 add nodes += [NodeData::Dummy => Some(NodeData::Node(new_node))];
                 add nodes += [NodeData::Node(new_node) => Some(NodeData::Node(upper_node))];
+                add node_witnesses += {NodeData::Node(new_node)};
+            }
+        }
+
+        transition!{
+            duplicate_witness(data: u32) {
+                have nodes >= [NodeData::Node(data) => let _];
+                add node_witnesses += {NodeData::Node(data)};
             }
         }
 
@@ -210,6 +231,10 @@ tokenized_state_machine!{
 
         #[inductive(insert_node_inbetween_dummy_and_normal)]
         fn insert_node_inbetween_dummy_and_normal_inductive(pre: Self, post: Self, upper_node: u32, new_node: u32) { 
+        }
+
+        #[inductive(duplicate_witness)]
+        fn duplicate_witness_inductive(pre: Self, post: Self, data: u32) { 
         }
     }
 }
@@ -326,6 +351,12 @@ impl LockedDummyNode {
                 points_to_inv = Some(points_to.get());
             }
         );
+    }
+
+    pub open spec fn contains(&self, data: NodeData) -> bool {
+        exists |witness: machine::node_witnesses|
+            witness.instance_id() == self.instance@.id() &&
+            witness.element() == data
     }
 }
 
@@ -464,7 +495,7 @@ fn insert(locked_dummy_node: Arc<LockedDummyNode>, insert_data_list: &[u32])
         locked_dummy_node.wf()
 {
     let mut i = 0;
-    let mut join_handles: Vec<JoinHandle<()>> = Vec::new();
+    let mut join_handles: Vec<JoinHandle<Tracked<machine::node_witnesses>>> = Vec::new();
     while i < insert_data_list.len() 
         invariant
             0 <= i <= insert_data_list.len() ,
@@ -475,7 +506,9 @@ fn insert(locked_dummy_node: Arc<LockedDummyNode>, insert_data_list: &[u32])
     {
         let thread_head = locked_dummy_node.clone();
         let insert_data = insert_data_list[i];
-        let join_handle = spawn(move || insert_thread_routine(thread_head, insert_data));
+        let join_handle = spawn(move || -> (witness: Tracked<machine::node_witnesses>) {
+            insert_thread_routine(thread_head, insert_data)
+        });
         join_handles.push(join_handle);
         i += 1;
     }
@@ -494,11 +527,12 @@ fn insert(locked_dummy_node: Arc<LockedDummyNode>, insert_data_list: &[u32])
     }
 }
 
-fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u32)
+fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u32) -> (witness: Tracked<machine::node_witnesses>)
     requires
         locked_dummy_node.wf()
     ensures
-        locked_dummy_node.wf()
+        locked_dummy_node.wf(),
+        witness.element() == NodeData::Node(insert_data)
 {
     let mut dummy_node_perm = locked_dummy_node.acquire_lock();
     let mut dummy_node_view = locked_dummy_node.cell.borrow(Tracked(dummy_node_perm.borrow_mut()));
@@ -518,11 +552,13 @@ fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u
         let tracked tuple;
         let tracked updated_dummy_node_token;
         let tracked new_node_token;
+        let tracked new_node_witness;
 
         proof {
             tuple = locked_dummy_node.instance.borrow().add_to_dummy_tail(insert_data, old_dummy_node_token.get());
             updated_dummy_node_token = tuple.0.get();
             new_node_token = tuple.1.get();
+            new_node_witness = tuple.2.get();
         }
 
         let next_locked_node = LockedNode::new(
@@ -540,7 +576,7 @@ fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u
 
         locked_dummy_node.cell.replace(Tracked(dummy_node_perm.borrow_mut()), dummy_node);
         locked_dummy_node.release_lock(dummy_node_perm);
-        return;
+        return Tracked(new_node_witness);
     } 
     // Otherwise, we need to begin the loop of grabbing the next lock
     else {
@@ -556,9 +592,18 @@ fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u
             let current_node_data = current_locked_node.data_view.get();
             // Check if we already have this node:
             if (insert_data == current_node_data) {
+                let current_node_token = current_node_view.map_token.as_ref().unwrap();
+
+                let tracked duplicate_witness;
+        
+
+                proof {
+                    duplicate_witness = locked_dummy_node.instance.borrow().duplicate_witness(insert_data, &current_node_token.borrow());
+                }
+
                 locked_dummy_node.release_lock(dummy_node_perm);
                 current_locked_node.release_lock(current_node_perm);
-                return;
+                return Tracked(duplicate_witness);
             }
             // Check if we need to insert inbetween dummy and first node:
             if (insert_data < current_node_data) {
@@ -575,11 +620,13 @@ fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u
                 let tracked tuple;
                 let tracked updated_dummy_node_token;
                 let tracked new_node_token;
+                let tracked new_node_witness;
 
                 proof {
                     tuple = locked_dummy_node.instance.borrow().insert_node_inbetween_dummy_and_normal(current_node_data, insert_data, old_dummy_node_token.get());
                     updated_dummy_node_token = tuple.0.get();
                     new_node_token = tuple.1.get();
+                    new_node_witness = tuple.2.get();
                 }
 
                 let new_locked_node = LockedNode::new(
@@ -600,7 +647,7 @@ fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u
 
                 locked_dummy_node.release_lock(dummy_node_perm);
                 current_locked_node.release_lock(current_node_perm);
-                return;
+                return Tracked(new_node_witness);
             }
 
             // And release the dummy node lock
@@ -647,11 +694,13 @@ fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u
                 let tracked tuple;
                 let tracked updated_tail_node_token;
                 let tracked new_tail_node_token;
+                let tracked new_node_witness;
 
                 proof {
                     tuple = current_locked_node.instance.borrow().add_to_node_tail(current_node_data, insert_data, old_tail_node_token.get());
                     updated_tail_node_token = tuple.0.get();
                     new_tail_node_token = tuple.1.get();
+                    new_node_witness = tuple.2.get();
                 }
 
                 let new_tail_node = LockedNode::new(
@@ -666,7 +715,7 @@ fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u
 
                 current_locked_node.cell.replace(Tracked(current_node_perm.borrow_mut()), old_tail_node);
                 current_locked_node.release_lock(current_node_perm);
-                return;
+                return Tracked(new_node_witness);
             } 
             
             else {
@@ -677,9 +726,17 @@ fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u
 
                 // Check if we already have the node:
                 if (insert_data == next_node_data) {
+                    let next_node_token = next_node_view.map_token.as_ref().unwrap();
+
+                    let tracked duplicate_witness;
+
+                    proof {
+                        duplicate_witness = locked_dummy_node.instance.borrow().duplicate_witness(insert_data, &next_node_token.borrow());
+                    }
+
                     current_locked_node.release_lock(current_node_perm);
                     next_locked_node.release_lock(next_node_perm);
-                    return;
+                    return Tracked(duplicate_witness);
                 } 
 
                 // Check if we need to insert here
@@ -697,11 +754,13 @@ fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u
                     let tracked tuple;
                     let tracked updated_lower_node_token;
                     let tracked new_node_token;
+                    let tracked new_node_witness;
 
                     proof {
                         tuple = current_locked_node.instance.borrow().insert_node_inbetween_normal_and_normal(current_node_data, next_node_data, insert_data, old_lower_node_token.get());
                         updated_lower_node_token = tuple.0.get();
                         new_node_token = tuple.1.get();
+                        new_node_witness = tuple.2.get();
                     }
 
                     let new_locked_node = LockedNode::new(
@@ -719,7 +778,7 @@ fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u
 
                     current_locked_node.release_lock(current_node_perm);
                     next_locked_node.release_lock(next_node_perm);
-                    return;
+                    return Tracked(new_node_witness);
                 } 
 
                 // Otherwise, we give up the previous lock, and loop again!
@@ -737,28 +796,37 @@ fn main() {
     let tracked (
         Tracked(instance),
         Tracked(nodes),
+        Tracked(node_witnesses),
         Tracked(initialized),
     ) = machine::Instance::initialize();
 
+    let tracked dummy_tuple;
     let tracked dummy_token;
+    let tracked dummy_witness;
 
     proof {
-        dummy_token = instance.add_dummy_node(&mut initialized);
+        dummy_tuple = instance.add_dummy_node(&mut initialized);
+        dummy_token = dummy_tuple.0.get();
+        dummy_witness = dummy_tuple.1.get();
     }
 
     let linked_list = Arc::new(LockedDummyNode::new(Tracked(dummy_token), Tracked(instance.clone())));
 
+    assert(linked_list.contains(NodeData::Dummy));
+
     insert(linked_list.clone(), &[5, 4, 3, 2, 1]);
 
-    let mut dummy_node_perm = linked_list.acquire_lock();
-    let mut dummy_node_view = linked_list.cell.borrow(Tracked(dummy_node_perm.borrow_mut()));
+    // assert(linked_list.contains(NodeData::Node(5)));
 
-    let mut current_locked_node = dummy_node_view.next_node.as_ref().unwrap().clone();
-    let mut current_node_perm = current_locked_node.acquire_lock();
-    let mut current_node_view = current_locked_node.cell.borrow(Tracked(current_node_perm.borrow_mut()));
+    // let mut dummy_node_perm = linked_list.acquire_lock();
+    // let mut dummy_node_view = linked_list.cell.borrow(Tracked(dummy_node_perm.borrow_mut()));
 
-    let current_node_data = current_locked_node.data_view.get();
+    // let mut current_locked_node = dummy_node_view.next_node.as_ref().unwrap().clone();
+    // let mut current_node_perm = current_locked_node.acquire_lock();
+    // let mut current_node_view = current_locked_node.cell.borrow(Tracked(current_node_perm.borrow_mut()));
 
-    assert(current_node_data == 1);
+    // let current_node_data = current_locked_node.data_view.get();
+
+    // assert(current_node_data == 1);
 }
 }

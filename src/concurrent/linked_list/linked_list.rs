@@ -514,12 +514,21 @@ fn insert(locked_dummy_node: Arc<LockedDummyNode>, insert_data_list: &[u32])
             0 <= i <= insert_data_list.len() ,
             locked_dummy_node.wf(),
             join_handles.len() == i,
+            forall|j: int, ret|
+                0 <= j < i ==> join_handles@.index(j).predicate(ret) ==>
+                    ret@.instance_id() == locked_dummy_node.instance@.id() &&
+                    ret@.element() == NodeData::Node(insert_data_list[j])
         decreases
             insert_data_list.len() - i
     {
         let thread_head = locked_dummy_node.clone();
         let insert_data = insert_data_list[i];
-        let join_handle = spawn(move || -> (witness: Tracked<machine::node_witnesses>) {
+        let join_handle = spawn(move || -> (witness: Tracked<machine::node_witnesses>) 
+            ensures
+                witness.instance_id() == locked_dummy_node.instance@.id(),
+                witness.element() == NodeData::Node(insert_data_list[i as int])
+
+        {
             insert_thread_routine(thread_head, insert_data)
         });
         join_handles.push(join_handle);
@@ -535,8 +544,15 @@ fn insert(locked_dummy_node: Arc<LockedDummyNode>, insert_data_list: &[u32])
             locked_dummy_node.wf(),
             join_handles.len() == insert_data_list.len() - i,
             witnesses.len() == i,
-            forall |j: int| #![auto] 0 <= j < witnesses.len() ==>
-                witnesses[j]@.element() == NodeData::Node(insert_data_list[j])
+            (forall|j: int, ret|
+                0 <= j < join_handles@.len() ==>
+                    #[trigger] join_handles@.index(j).predicate(ret) ==>
+                        ret@.instance_id() == locked_dummy_node.instance@.id() &&
+                        ret@.element() == NodeData::Node(insert_data_list[j])),
+            forall |j: int| #![auto] 0 <= j < witnesses.len() ==> (
+                witnesses[j]@.instance_id() == locked_dummy_node.instance@.id() &&
+                witnesses[j]@.element() == NodeData::Node(insert_data_list[insert_data_list.len() - 1 - j])
+            ),
                 
         decreases
             insert_data_list.len() - i
@@ -544,7 +560,8 @@ fn insert(locked_dummy_node: Arc<LockedDummyNode>, insert_data_list: &[u32])
         let join_handle = join_handles.pop().unwrap();
         match join_handle.join() {
             Result::Ok(witness) => {
-                assert(witness.element() == NodeData::Node(insert_data_list[i as int]));
+                assert(witness.instance_id() == locked_dummy_node.instance@.id());
+                assert(witness.element() == NodeData::Node(insert_data_list[insert_data_list.len() - 1 - i]));
                 witnesses.push(witness);
             },
             _ => {
@@ -555,7 +572,14 @@ fn insert(locked_dummy_node: Arc<LockedDummyNode>, insert_data_list: &[u32])
         i = i + 1;
     }
 
-    // assert(witnesses.len() == insert_data_list.len());
+    proof {
+        assert forall |i: int| #![auto] 0 <= i < insert_data_list.len() implies
+            locked_dummy_node.contains(NodeData::Node(insert_data_list[i])) by {
+                let witness = witnesses[insert_data_list.len() - 1 - i];
+                assert(witness@.instance_id() == locked_dummy_node.instance@.id());
+                assert(witness.element() == NodeData::Node(insert_data_list[i as int]));
+        }
+    }
 }
 
 fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u32) -> (witness: Tracked<machine::node_witnesses>)
@@ -847,19 +871,12 @@ fn main() {
 
     assert(linked_list.contains(NodeData::Dummy));
 
-    insert(linked_list.clone(), &[5, 4, 3, 2, 1]);
+    insert(linked_list.clone(), &[5, 2, 4, 3, 1]);
 
-    // assert(linked_list.contains(NodeData::Node(5)));
-
-    // let mut dummy_node_perm = linked_list.acquire_lock();
-    // let mut dummy_node_view = linked_list.cell.borrow(Tracked(dummy_node_perm.borrow_mut()));
-
-    // let mut current_locked_node = dummy_node_view.next_node.as_ref().unwrap().clone();
-    // let mut current_node_perm = current_locked_node.acquire_lock();
-    // let mut current_node_view = current_locked_node.cell.borrow(Tracked(current_node_perm.borrow_mut()));
-
-    // let current_node_data = current_locked_node.data_view.get();
-
-    // assert(current_node_data == 1);
+    assert(linked_list.contains(NodeData::Node(5)));
+    assert(linked_list.contains(NodeData::Node(4)));
+    assert(linked_list.contains(NodeData::Node(3)));
+    assert(linked_list.contains(NodeData::Node(2)));
+    assert(linked_list.contains(NodeData::Node(1)));
 }
 }

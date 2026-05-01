@@ -10,7 +10,7 @@ use vstd::prelude::*;
 use vstd::thread::*;
 use vstd::{pervasive::*, prelude::*, *};
 use vstd::cell::pcell;
-use vstd::set::*;
+use vstd::multiset::*;
 
 verus! {
 
@@ -60,8 +60,8 @@ tokenized_state_machine!{
             #[sharding(map)]
             pub nodes: Map<NodeData, Option<NodeData>>,
 
-            #[sharding(set)]
-            pub node_witnesses: Set<NodeData>,
+            #[sharding(multiset)]
+            pub node_witnesses: Multiset<NodeData>,
 
             #[sharding(variable)]
             pub initialized: bool,
@@ -70,11 +70,10 @@ tokenized_state_machine!{
         #[invariant]
         pub fn main_inv(&self) -> bool {
             // The node witnesses reflect the nodes:
-            (forall |i: u32| #![auto] self.node_witnesses.contains(NodeData::Node(i)) <==> self.nodes.dom().contains(NodeData::Node(i))) &&
+            (forall |i: u32| #![auto] self.node_witnesses.count(NodeData::Node(i)) > 0 <==> self.nodes.dom().contains(NodeData::Node(i))) &&
 
             // If the map is uninitialised, then it doesn't contain anything, not even the dummy node (and vice versa)
             (!self.initialized <==> self.nodes.is_empty()) &&
-            (!self.initialized <==> self.node_witnesses.is_empty()) &&
 
             // If the map is initialised, then it must at least have the dummy node:
             // This case looks redundant, but I believe it will help the SMT solver.
@@ -144,7 +143,7 @@ tokenized_state_machine!{
             {
                 init nodes = Map::empty();
                 init initialized = false;
-                init node_witnesses = Set::empty();
+                init node_witnesses = Multiset::empty();
             }
         }
 
@@ -154,7 +153,7 @@ tokenized_state_machine!{
                 require(!pre.initialized);
                 update initialized = true;
                 add nodes += [NodeData::Dummy => None];
-                add node_witnesses += set {NodeData::Dummy};
+                add node_witnesses += {NodeData::Dummy};
             }
         }
 
@@ -164,7 +163,7 @@ tokenized_state_machine!{
                 remove nodes -= [NodeData::Dummy => None];
                 add nodes += [NodeData::Dummy => Some(NodeData::Node(new_tail))];
                 add nodes += [NodeData::Node(new_tail) => None];
-                add node_witnesses += set {NodeData::Node(new_tail)};
+                add node_witnesses += {NodeData::Node(new_tail)};
             }
         }
 
@@ -175,7 +174,7 @@ tokenized_state_machine!{
                 remove nodes -= [NodeData::Node(current_tail) => None];
                 add nodes += [NodeData::Node(current_tail) => Some(NodeData::Node(new_tail))];
                 add nodes += [NodeData::Node(new_tail) => None];
-                add node_witnesses += set {NodeData::Node(new_tail)};
+                add node_witnesses += {NodeData::Node(new_tail)};
 
             }
         }
@@ -188,7 +187,7 @@ tokenized_state_machine!{
                 remove nodes -= [NodeData::Node(lower_node) => Some(NodeData::Node(upper_node))];
                 add nodes += [NodeData::Node(lower_node) => Some(NodeData::Node(new_node))];
                 add nodes += [NodeData::Node(new_node) => Some(NodeData::Node(upper_node))];
-                add node_witnesses += set {NodeData::Node(new_node)};
+                add node_witnesses += {NodeData::Node(new_node)};
             }
         }
 
@@ -199,7 +198,14 @@ tokenized_state_machine!{
                 remove nodes -= [NodeData::Dummy => Some(NodeData::Node(upper_node))];
                 add nodes += [NodeData::Dummy => Some(NodeData::Node(new_node))];
                 add nodes += [NodeData::Node(new_node) => Some(NodeData::Node(upper_node))];
-                add node_witnesses += set {NodeData::Node(new_node)};
+                add node_witnesses += {NodeData::Node(new_node)};
+            }
+        }
+
+        transition!{
+            duplicate_witness(data: u32) {
+                have nodes >= [NodeData::Node(data) => let _];
+                add node_witnesses += {NodeData::Node(data)};
             }
         }
 
@@ -225,6 +231,10 @@ tokenized_state_machine!{
 
         #[inductive(insert_node_inbetween_dummy_and_normal)]
         fn insert_node_inbetween_dummy_and_normal_inductive(pre: Self, post: Self, upper_node: u32, new_node: u32) { 
+        }
+
+        #[inductive(duplicate_witness)]
+        fn duplicate_witness_inductive(pre: Self, post: Self, data: u32) { 
         }
     }
 }
@@ -344,6 +354,12 @@ impl LockedDummyNode {
                 points_to_inv = Some(points_to.get());
             }
         );
+    }
+
+    pub open spec fn contains(&self, data: NodeData) -> bool {
+        exists |witness: machine::node_witnesses|
+            witness.instance_id() == self.instance@.id() &&
+            witness.element() == data
     }
 }
 
@@ -483,160 +499,86 @@ impl LockedNode {
     }
 }
 
-pub struct LinkedList {
-    pub element_witnesses: Vec<Tracked<machine::node_witnesses>>,
-    pub head: Arc<LockedDummyNode>,
-}
-
-impl LinkedList {
-    fn new(mut initialized: Tracked<machine::initialized>, instance: Tracked<machine::Instance>) -> (linked_list: Self) 
-        requires
-            initialized@.instance_id() == instance@.id(),
-            initialized@.value() == false
-        ensures
-            linked_list.head.wf(),
-            linked_list.valid_witnesses(),
-            linked_list.contains(NodeData::Dummy),
-            forall |node_data: NodeData| node_data != NodeData::Dummy ==>
-                linked_list.not_contains(node_data)
-
+fn insert(locked_dummy_node: Arc<LockedDummyNode>, insert_data_list: &[u32]) 
+    requires
+        locked_dummy_node.wf()
+    ensures
+        locked_dummy_node.wf(),
+        forall |i: int| #![auto] 0 <= i < insert_data_list.len() ==> 
+            locked_dummy_node.contains(NodeData::Node(insert_data_list[i]))
+{
+    let mut i = 0;
+    let mut join_handles: Vec<JoinHandle<Tracked<machine::node_witnesses>>> = Vec::new();
+    while i < insert_data_list.len() 
+        invariant
+            0 <= i <= insert_data_list.len() ,
+            locked_dummy_node.wf(),
+            join_handles.len() == i,
+            forall|j: int, ret|
+                0 <= j < i ==> join_handles@.index(j).predicate(ret) ==>
+                    ret@.instance_id() == locked_dummy_node.instance@.id() &&
+                    ret@.element() == NodeData::Node(insert_data_list[j])
+        decreases
+            insert_data_list.len() - i
     {
-        let tracked dummy_tuple;
-        let tracked dummy_token;
-        let tracked dummy_witness;
+        let thread_head = locked_dummy_node.clone();
+        let insert_data = insert_data_list[i];
+        let join_handle = spawn(move || -> (witness: Tracked<machine::node_witnesses>) 
+            ensures
+                witness.instance_id() == locked_dummy_node.instance@.id(),
+                witness.element() == NodeData::Node(insert_data_list[i as int])
 
-        proof {
-            dummy_tuple = instance.add_dummy_node(&mut initialized);
-            dummy_token = dummy_tuple.0.get();
-            dummy_witness = dummy_tuple.1.get();
-        }
-
-        let mut element_witnesses = Vec::new();
-        element_witnesses.push(Tracked(dummy_witness));
-        let head = Arc::new(LockedDummyNode::new(Tracked(dummy_token), instance.clone()));
-
-        let linked_list = Self {
-            element_witnesses,
-            head
-        };
-
-        assert(
-            exists |i: int| #![auto] 0 <= i < linked_list.element_witnesses.len() ==>
-                linked_list.element_witnesses[i]@.element() == NodeData::Dummy
-        ) by {
-            assert(linked_list.element_witnesses[0]@.element() == NodeData::Dummy);
-            assert(linked_list.element_witnesses[0]@.instance_id() == head.instance@.id());
-        };
-
-        return linked_list
+        {
+            insert_thread_routine(thread_head, insert_data)
+        });
+        join_handles.push(join_handle);
+        i += 1;
     }
 
-    fn insert(&mut self, insert_data_list: &[u32]) 
-        requires
-            old(self).head.wf(),
-            old(self).valid_witnesses(),
-            old(self).not_contains_any(insert_data_list),
-        ensures
-            self.head.wf(),
-            self.valid_witnesses(),
-            self.contains_all(insert_data_list),
+
+    let mut i = 0;
+    let mut witnesses: Vec<Tracked<machine::node_witnesses>> = Vec::new();
+    while i < insert_data_list.len() 
+        invariant
+            0 <= i <= insert_data_list.len(),
+            locked_dummy_node.wf(),
+            join_handles.len() == insert_data_list.len() - i,
+            witnesses.len() == i,
+            (forall|j: int, ret|
+                0 <= j < join_handles@.len() ==>
+                    #[trigger] join_handles@.index(j).predicate(ret) ==>
+                        ret@.instance_id() == locked_dummy_node.instance@.id() &&
+                        ret@.element() == NodeData::Node(insert_data_list[j])),
+            forall |j: int| #![auto] 0 <= j < witnesses.len() ==> (
+                witnesses[j]@.instance_id() == locked_dummy_node.instance@.id() &&
+                witnesses[j]@.element() == NodeData::Node(insert_data_list[insert_data_list.len() - 1 - j])
+            ),
+                
+        decreases
+            insert_data_list.len() - i
     {
-        let mut i = 0;
-        let mut join_handles: Vec<JoinHandle<Tracked<machine::node_witnesses>>> = Vec::new();
-        while i < insert_data_list.len() 
-            invariant
-                0 <= i <= insert_data_list.len() ,
-                self.head.wf(),
-                join_handles.len() == i,
-                forall|j: int, ret|
-                    0 <= j < i ==> join_handles@.index(j).predicate(ret) ==>
-                        ret@.instance_id() == self.head.instance@.id() &&
-                        ret@.element() == NodeData::Node(insert_data_list[j])
-            decreases
-                insert_data_list.len() - i
-        {
-            let thread_head = self.head.clone();
-            let insert_data = insert_data_list[i];
-            let join_handle = spawn(move || -> (witness: Tracked<machine::node_witnesses>) 
-                ensures
-                    witness.instance_id() == self.head.instance@.id(),
-                    witness.element() == NodeData::Node(insert_data_list[i as int])
+        let join_handle = join_handles.pop().unwrap();
+        match join_handle.join() {
+            Result::Ok(witness) => {
+                assert(witness.instance_id() == locked_dummy_node.instance@.id());
+                assert(witness.element() == NodeData::Node(insert_data_list[insert_data_list.len() - 1 - i]));
+                witnesses.push(witness);
+            },
+            _ => {
+                assume(false);
+                return;
+            },
+        };
+        i = i + 1;
+    }
 
-            {
-                insert_thread_routine(thread_head, insert_data)
-            });
-            join_handles.push(join_handle);
-            i += 1;
+    proof {
+        assert forall |i: int| #![auto] 0 <= i < insert_data_list.len() implies
+            locked_dummy_node.contains(NodeData::Node(insert_data_list[i])) by {
+                let witness = witnesses[insert_data_list.len() - 1 - i];
+                assert(witness@.instance_id() == locked_dummy_node.instance@.id());
+                assert(witness.element() == NodeData::Node(insert_data_list[i as int]));
         }
-
-        let mut original_witnesses_length = self.element_witnesses.len();
-        let mut i = 0;
-        while i < insert_data_list.len() 
-            invariant
-                0 <= i <= insert_data_list.len(),
-                self.head.wf(),
-                join_handles.len() == insert_data_list.len() - i,
-                self.element_witnesses.len() == original_witnesses_length + i,
-                self.valid_witnesses(),
-                (forall|j: int, ret|
-                    0 <= j < join_handles@.len() ==>
-                        #[trigger] join_handles@.index(j).predicate(ret) ==>
-                            ret@.instance_id() == self.head.instance@.id() &&
-                            ret@.element() == NodeData::Node(insert_data_list[j])),
-                forall |j: int| 0 <= j < i ==>
-                        #[trigger] self.contains(NodeData::Node(insert_data_list[insert_data_list.len() - 1 - j]))
-            decreases
-                insert_data_list.len() - i
-        {
-            let join_handle = join_handles.pop().unwrap();
-            match join_handle.join() {
-                Result::Ok(witness) => {
-                    self.element_witnesses.push(witness);
-                    assert(self.element_witnesses[self.element_witnesses.len() - 1].element() == NodeData::Node(insert_data_list[insert_data_list.len() - 1 - i]));
-                    assert(self.contains(NodeData::Node(insert_data_list[insert_data_list.len() - 1 - i])));
-                },
-                _ => {
-                    assume(false);
-                    return;
-                },
-            };
-            i = i + 1;
-        }
-
-        assume(forall |i: int| #![auto] 0 <= i < insert_data_list.len() ==>
-                self.contains(NodeData::Node(insert_data_list[i])));
-
-        assert(self.contains_all(insert_data_list));
-    }
-
-    pub open spec fn valid_witnesses(&self) -> bool {
-        forall |i: int| #![auto] 0 <= i < self.element_witnesses.len() ==>
-            self.element_witnesses[i]@.instance_id() == self.head.instance@.id()
-    }
-
-    pub open spec fn contains(&self, data: NodeData) -> bool {
-        self.valid_witnesses() &&
-        exists |i: int| #![auto] 0 <= i < self.element_witnesses.len() ==>
-            self.element_witnesses[i]@.element() == data
-    }
-
-    pub open spec fn not_contains(&self, data: NodeData) -> bool {
-        self.valid_witnesses() &&
-        forall |i: int| #![auto] 0 <= i < self.element_witnesses.len() ==>
-            self.element_witnesses[i]@.element() != data
-    }
-
-    pub open spec fn not_contains_any(&self, data: &[u32]) -> bool {
-        self.valid_witnesses() &&
-        forall |i: int, j: int| #![auto] 
-            (0 <= i < self.element_witnesses.len() && 0 <= j < data.len()) ==>
-            self.element_witnesses[i]@.element() != NodeData::Node(data[j])
-    }
-
-    pub open spec fn contains_all(&self, data: &[u32]) -> bool {
-        forall |i: int| #![auto] 
-            0 <= i < data.len() ==>
-                self.contains(NodeData::Node(data[i]))
     }
 }
 
@@ -705,19 +647,18 @@ fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u
             let mut current_node_view = current_locked_node.cell.borrow(Tracked(current_node_perm.borrow_mut()));
             let current_node_data = current_locked_node.data_view.get();
             // Check if we already have this node:
-            assume(insert_data != current_node_data);
             if (insert_data == current_node_data) {
-                // let current_node_token = current_node_view.map_token.as_ref().unwrap();
+                let current_node_token = current_node_view.map_token.as_ref().unwrap();
 
-                // let tracked duplicate_witness;
+                let tracked duplicate_witness;
 
-                // proof {
-                //     duplicate_witness = current_locked_node.instance.borrow().duplicate_witness(insert_data, &current_node_token.borrow());
-                // }
+                proof {
+                    duplicate_witness = current_locked_node.instance.borrow().duplicate_witness(insert_data, &current_node_token.borrow());
+                }
 
-                // locked_dummy_node.release_lock(dummy_node_perm);
-                // current_locked_node.release_lock(current_node_perm);
-                // return Tracked(duplicate_witness);
+                locked_dummy_node.release_lock(dummy_node_perm);
+                current_locked_node.release_lock(current_node_perm);
+                return Tracked(duplicate_witness);
             }
             // Check if we need to insert inbetween dummy and first node:
             if (insert_data < current_node_data) {
@@ -841,19 +782,18 @@ fn insert_thread_routine(locked_dummy_node: Arc<LockedDummyNode>, insert_data: u
                 let next_node_data = next_locked_node.data_view.get();
 
                 // Check if we already have the node:
-                assume(insert_data != next_node_data);
                 if (insert_data == next_node_data) {
-                    // let next_node_token = next_node_view.map_token.as_ref().unwrap();
+                    let next_node_token = next_node_view.map_token.as_ref().unwrap();
 
-                    // let tracked duplicate_witness;
+                    let tracked duplicate_witness;
 
-                    // proof {
-                    //     duplicate_witness = next_locked_node.instance.borrow().duplicate_witness(insert_data, &next_node_token.borrow());
-                    // }
+                    proof {
+                        duplicate_witness = next_locked_node.instance.borrow().duplicate_witness(insert_data, &next_node_token.borrow());
+                    }
 
-                    // current_locked_node.release_lock(current_node_perm);
-                    // next_locked_node.release_lock(next_node_perm);
-                    // return Tracked(duplicate_witness);
+                    current_locked_node.release_lock(current_node_perm);
+                    next_locked_node.release_lock(next_node_perm);
+                    return Tracked(duplicate_witness);
                 } 
 
                 // Check if we need to insert here
@@ -917,19 +857,26 @@ fn main() {
         Tracked(initialized),
     ) = machine::Instance::initialize();
 
-    let linked_list = LinkedList::new(Tracked(initialized), Tracked(instance));
+    let tracked dummy_tuple;
+    let tracked dummy_token;
+    let tracked dummy_witness;
 
-    assert(linked_list.not_contains(NodeData::Node(6)));
-    assert(linked_list.not_contains(NodeData::Node(7)));
+    proof {
+        dummy_tuple = instance.add_dummy_node(&mut initialized);
+        dummy_token = dummy_tuple.0.get();
+        dummy_witness = dummy_tuple.1.get();
+    }
 
-    // assert(linked_list.contains(NodeData::Dummy));
+    let linked_list = Arc::new(LockedDummyNode::new(Tracked(dummy_token), Tracked(instance.clone())));
 
-    // insert(linked_list.clone(), &[5, 2, 4, 3, 1]);
+    assert(linked_list.contains(NodeData::Dummy));
 
-    // assert(linked_list.contains(NodeData::Node(5)));
-    // assert(linked_list.contains(NodeData::Node(4)));
-    // assert(linked_list.contains(NodeData::Node(3)));
-    // assert(linked_list.contains(NodeData::Node(2)));
-    // assert(linked_list.contains(NodeData::Node(1)));
+    insert(linked_list.clone(), &[5, 2, 4, 3, 1]);
+
+    assert(linked_list.contains(NodeData::Node(5)));
+    assert(linked_list.contains(NodeData::Node(4)));
+    assert(linked_list.contains(NodeData::Node(3)));
+    assert(linked_list.contains(NodeData::Node(2)));
+    assert(linked_list.contains(NodeData::Node(1)));
 }
 }

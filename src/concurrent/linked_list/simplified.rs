@@ -220,9 +220,11 @@ struct_with_invariants!{
                 Some(points_to) => {
                     v == false &&
                     points_to.id() == cell.id() &&
-                    points_to.value().head.is_some() ==> (
-                        points_to.value().head.unwrap().wf() && 
-                        points_to.value().head.unwrap().instance == instance
+                    (
+                        points_to.value().head.is_some() ==> (
+                            points_to.value().head.unwrap().wf() && 
+                            points_to.value().head.unwrap().instance == instance
+                        )
                     )
                 }
             }
@@ -257,7 +259,7 @@ impl LockedDummyNode {
             self.wf(),
         ensures 
             self.wf(),
-            points_to@.id() == self.cell.id() &&
+            points_to@.id() == self.cell.id(),
             points_to@.value().head.is_some() ==> (
                 points_to@.value().head.unwrap().wf() && 
                 points_to@.value().head.unwrap().instance == self.instance
@@ -282,7 +284,7 @@ impl LockedDummyNode {
     fn release_lock(&self, points_to: Tracked<pcell::PointsTo<DummyNode>>)
         requires
             self.wf(),
-            points_to@.id() == self.cell.id() &&
+            points_to@.id() == self.cell.id(),
             points_to@.value().head.is_some() ==> (
                 points_to@.value().head.unwrap().wf() && 
                 points_to@.value().head.unwrap().instance == self.instance
@@ -320,10 +322,12 @@ struct_with_invariants!{
                     v == false &&
                     points_to.id() == cell.id() &&
                     points_to.value().data == data_view &&
-                    points_to.value().next_node.is_some() ==> (
-                        points_to.value().next_node.unwrap().wf() && 
-                        points_to.value().next_node.unwrap().instance == instance &&
-                        points_to.value().data < points_to.value().next_node.unwrap().data_view
+                    (
+                        points_to.value().next_node.is_some() ==> (
+                            points_to.value().next_node.unwrap().wf() && 
+                            points_to.value().next_node.unwrap().instance == instance &&
+                            points_to.value().data < points_to.value().next_node.unwrap().data_view
+                        )
                     )
                 }
             }
@@ -384,7 +388,7 @@ impl LockedNode {
             self.wf(),
             points_to@.id() == self.cell.id(),
             points_to@.value().next_node.is_some() ==> (
-                points_to@.value().next_node.unwrap().wf() &&
+                points_to@.value().next_node.unwrap().wf() && 
                 points_to@.value().next_node.unwrap().instance == self.instance &&
                 points_to@.value().data < points_to@.value().next_node.unwrap().data_view
             )

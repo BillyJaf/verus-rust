@@ -43,17 +43,6 @@ impl NodeData {
     }
 }
 
-impl NodeData {
-    pub open spec fn spec_lt(self, other: Self) -> bool {
-        match (self, other) {
-            (NodeData::Dummy, NodeData::Dummy) => false,
-            (NodeData::Dummy, _) => true,
-            (_, NodeData::Dummy) => false,
-            (NodeData::Node(a), NodeData::Node(b)) => a < b,
-        }
-    }
-}
-
 tokenized_state_machine!{
     machine {
         fields {
@@ -535,11 +524,17 @@ impl LinkedList {
         requires
             old(self).head.wf(),
             old(self).valid_witnesses(),
-            old(self).not_contains_any(insert_data_list),
+            old(self).contains(NodeData::Dummy)
+            // forall |data: u32| #![auto]
+            //     (self.contains(NodeData::Node(data)) && old(self).not_contains(NodeData::Node(data))) 
+            //     ==> insert_data_list@.contains(data)
         ensures
             self.head.wf(),
             self.valid_witnesses(),
-            self.contains_all(insert_data_list),
+            old(self).contains(NodeData::Dummy),
+            forall |data: u32| #![auto]
+                (self.contains(NodeData::Node(data)) && old(self).not_contains(NodeData::Node(data))) 
+                ==> insert_data_list@.contains(data)
     {
         let mut i = 0;
         let mut join_handles: Vec<JoinHandle<Tracked<machine::node_witnesses>>> = Vec::new();
@@ -583,8 +578,8 @@ impl LinkedList {
                         #[trigger] join_handles@.index(j).predicate(ret) ==>
                             ret@.instance_id() == self.head.instance@.id() &&
                             ret@.element() == NodeData::Node(insert_data_list[j])),
-                forall |j: int| 0 <= j < i ==>
-                        #[trigger] self.contains(NodeData::Node(insert_data_list[insert_data_list.len() - 1 - j]))
+                // forall |j: int| 0 <= j < i ==>
+                //         #[trigger] self.contains(NodeData::Node(insert_data_list[insert_data_list.len() - 1 - j]))
             decreases
                 insert_data_list.len() - i
         {
@@ -594,6 +589,8 @@ impl LinkedList {
                     self.element_witnesses.push(witness);
                     assert(self.element_witnesses[self.element_witnesses.len() - 1].element() == NodeData::Node(insert_data_list[insert_data_list.len() - 1 - i]));
                     assert(self.contains(NodeData::Node(insert_data_list[insert_data_list.len() - 1 - i])));
+                    // assert(forall |j: int| 0 <= j < i ==>
+                    //     #[trigger] self.contains(NodeData::Node(insert_data_list[insert_data_list.len() - 1 - j])));
                 },
                 _ => {
                     assume(false);
@@ -616,7 +613,7 @@ impl LinkedList {
 
     pub open spec fn contains(&self, data: NodeData) -> bool {
         self.valid_witnesses() &&
-        exists |i: int| #![auto] 0 <= i < self.element_witnesses.len() ==>
+        exists |i: int| #![auto] 0 <= i < self.element_witnesses.len() &&
             self.element_witnesses[i]@.element() == data
     }
 

@@ -436,6 +436,7 @@ impl LockedNode {
                 (
                     points_to.value().next_node.unwrap().wf() &&
                     points_to.value().next_node.unwrap().instance == self.instance &&
+                    NodeData::Node(points_to.value().data) < points_to.value().next_node.unwrap().data_view &&
                     points_to.value().next_node.unwrap().data_view == points_to.value().map_token.unwrap()@.value().unwrap()
                 )
             ),
@@ -500,12 +501,12 @@ impl LinkedList {
                     locked_node.instance@.id() == witness.unwrap().instance_id() &&
                     locked_node.data_view == witness.unwrap().element()
             ),
-            // witness.is_none() ==> (
-            //     exists |locked_node: LockedNode| #![auto]
-            //         locked_node.wf() && 
-            //         locked_node.instance == linked_list.instance &&
-            //         locked_node.data_view == NodeData::Node(insert_data)
-            // )
+            witness.is_none() ==> (
+                exists |locked_node: LockedNode| #![auto]
+                    locked_node.wf() && 
+                    locked_node.instance == linked_list.instance &&
+                    locked_node.data_view == NodeData::Node(insert_data)
+            )
     {
         let mut dummy_node_perm = linked_list.acquire_lock();
         let mut dummy_node_view = linked_list.cell.borrow(Tracked(dummy_node_perm.borrow_mut()));
@@ -635,6 +636,7 @@ impl LinkedList {
                             current_node_perm.value().next_node.unwrap().data_view == current_node_perm.value().map_token.unwrap()@.value().unwrap()
                         )
                     ),
+                    current_node_data == current_node_perm.value().data,
                     current_node_data < insert_data
 
             {

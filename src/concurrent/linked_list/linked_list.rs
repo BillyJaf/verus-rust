@@ -203,6 +203,47 @@ tokenized_state_machine!{
             }
         }
 
+        transition!{
+            delete_tail_after_dummy_node(delete_node: u32)
+            {   
+                remove nodes -= [NodeData::Dummy => Some(NodeData::Node(delete_node))];
+                remove nodes -= [NodeData::Node(delete_node) => None];
+                remove node_witnesses -= set {NodeData::Node(delete_node)};
+                add nodes += [NodeData::Dummy => None];
+            }
+        }
+
+        transition!{
+            delete_tail_node_after_normal_node(delete_node: u32, lower_node: u32)
+            {   
+                remove nodes -= [NodeData::Node(lower_node) => Some(NodeData::Node(delete_node))];
+                remove nodes -= [NodeData::Node(delete_node) => None];
+                remove node_witnesses -= set {NodeData::Node(delete_node)};
+                add nodes += [NodeData::Node(lower_node) => None];
+            }
+        }
+
+        transition!{
+            delete_inbetween_dummy_and_normal(delete_node: u32, upper_node: u32)
+            {   
+                remove nodes -= [NodeData::Dummy => Some(NodeData::Node(delete_node))];
+                remove nodes -= [NodeData::Node(delete_node) => Some(NodeData::Node(upper_node))];
+                add nodes += [NodeData::Dummy => Some(NodeData::Node(upper_node))];
+                remove node_witnesses -= set {NodeData::Node(delete_node)};
+            }
+        }
+
+        transition!{
+            delete_inbetween_normal_and_normal(delete_node: u32, lower_node: u32, upper_node: u32)
+            {   
+                remove nodes -= [NodeData::Node(lower_node) => Some(NodeData::Node(delete_node))];
+                remove nodes -= [NodeData::Node(delete_node) => Some(NodeData::Node(upper_node))];
+                add nodes += [NodeData::Node(lower_node) => Some(NodeData::Node(upper_node))];
+
+                remove node_witnesses -= set {NodeData::Node(delete_node)};
+            }
+        }
+
         #[inductive(initialize)]
         fn initialize_inductive(post: Self) { 
         }
@@ -225,6 +266,22 @@ tokenized_state_machine!{
 
         #[inductive(insert_node_inbetween_dummy_and_normal)]
         fn insert_node_inbetween_dummy_and_normal_inductive(pre: Self, post: Self, upper_node: u32, new_node: u32) { 
+        }
+
+        #[inductive(delete_tail_after_dummy_node)]
+        fn delete_tail_after_dummy_node_inductive(pre: Self, post: Self, delete_node: u32) { 
+        }
+
+        #[inductive(delete_tail_node_after_normal_node)]
+        fn delete_tail_node_after_normal_node_inductive(pre: Self, post: Self, delete_node: u32, lower_node: u32) { 
+        }
+
+        #[inductive(delete_inbetween_dummy_and_normal)]
+        fn delete_inbetween_dummy_and_normal_inductive(pre: Self, post: Self, delete_node: u32, upper_node: u32) {
+        }
+
+        #[inductive(delete_inbetween_normal_and_normal)]
+        fn delete_inbetween_normal_and_normal_inductive(pre: Self, post: Self, delete_node: u32, lower_node: u32, upper_node: u32) {
         }
     }
 }

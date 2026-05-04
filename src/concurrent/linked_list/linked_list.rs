@@ -561,28 +561,27 @@ impl LockedNode {
     }
 }
 
-pub struct InsertReturn {
-    data: Option<u32>,
-    witness: Option<Tracked<machine::node_witnesses>>
+pub struct DataWitness {
+    data: u32,
+    witness: Tracked<machine::node_witnesses>
 }
 
 impl LinkedList {
-    fn insert(self: Arc<Self>, insert_data: u32) -> (insert_return: InsertReturn)
+    fn insert(self: Arc<Self>, insert_data: u32) -> (data_witness: Option<DataWitness>)
         requires
             self.wf()
         ensures
             self.wf(),
-            insert_return.witness.is_some() <==> insert_return.data.is_some(),
-            insert_return.witness.is_some() ==> (
-                insert_return.witness.unwrap().instance_id() == self.instance@.id() &&
-                insert_return.witness.unwrap().element() == NodeData::Node(insert_data) &&
-                insert_return.data.unwrap() == insert_data &&
+            data_witness.is_some() ==> (
+                data_witness.unwrap().witness.instance_id() == self.instance@.id() &&
+                data_witness.unwrap().witness.element() == NodeData::Node(insert_data) &&
+                data_witness.unwrap().data == insert_data &&
                 exists |locked_node: LockedNode| #![auto]
                     locked_node.wf() && 
-                    locked_node.instance@.id() == insert_return.witness.unwrap().instance_id() &&
-                    locked_node.data_view == insert_return.witness.unwrap().element()
+                    locked_node.instance@.id() == data_witness.unwrap().witness.instance_id() &&
+                    locked_node.data_view == data_witness.unwrap().witness.element()
             ),
-            insert_return.witness.is_none() ==> (
+            data_witness.is_none() ==> (
                 (
                     exists |locked_node: LockedNode| #![auto]
                         locked_node.wf() && 
@@ -632,10 +631,10 @@ impl LinkedList {
             self.cell.replace(Tracked(dummy_node_perm.borrow_mut()), dummy_node);
             self.release_lock(dummy_node_perm);
 
-            return InsertReturn {
-                data: Some(insert_data),
-                witness: Some(Tracked(new_node_witness))
-            };
+            return Some(DataWitness {
+                data: insert_data,
+                witness: Tracked(new_node_witness)
+            });
         } 
         // Otherwise, we need to begin the loop of grabbing the next lock
         else {
@@ -653,10 +652,7 @@ impl LinkedList {
                 if (insert_data == current_node_data) {
                     self.release_lock(dummy_node_perm);
                     current_locked_node.release_lock(current_node_perm);
-                    return InsertReturn {
-                        data: None,
-                        witness: None
-                    };
+                    return None;
                 }
 
                 // Check if we need to insert inbetween dummy and first node:
@@ -699,10 +695,10 @@ impl LinkedList {
 
                     self.release_lock(dummy_node_perm);
                     current_locked_node.release_lock(current_node_perm);
-                    return InsertReturn {
-                        data: Some(insert_data),
-                        witness: Some(Tracked(new_node_witness))
-                    };
+                    return Some(DataWitness {
+                        data: insert_data,
+                        witness: Tracked(new_node_witness)
+                    });
                 }
 
                 // And release the dummy node lock
@@ -771,10 +767,10 @@ impl LinkedList {
 
                     current_locked_node.cell.replace(Tracked(current_node_perm.borrow_mut()), old_tail_node);
                     current_locked_node.release_lock(current_node_perm);
-                    return InsertReturn {
-                        data: Some(insert_data),
-                        witness: Some(Tracked(new_node_witness))
-                    };
+                    return Some(DataWitness {
+                        data: insert_data,
+                        witness: Tracked(new_node_witness)
+                    });
                 } 
                 
                 else {
@@ -787,10 +783,7 @@ impl LinkedList {
                     if (insert_data == next_node_data) {
                         current_locked_node.release_lock(current_node_perm);
                         next_locked_node.release_lock(next_node_perm);
-                        return InsertReturn {
-                            data: None,
-                            witness: None
-                        };
+                        return None;
                     } 
 
                     // Check if we need to insert here
@@ -832,10 +825,10 @@ impl LinkedList {
 
                         current_locked_node.release_lock(current_node_perm);
                         next_locked_node.release_lock(next_node_perm);
-                        return InsertReturn {
-                            data: Some(insert_data),
-                            witness: Some(Tracked(new_node_witness))
-                        };
+                        return Some(DataWitness {
+                            data: insert_data,
+                            witness: Tracked(new_node_witness)
+                        });
                     } 
 
                     // Otherwise, we give up the previous lock, and loop again!
@@ -849,14 +842,16 @@ impl LinkedList {
         }
     }
 
-    fn delete(self: Arc<Self>, delete_data: u32, witness: Tracked<machine::node_witnesses>)
+    fn delete(self: Arc<Self>, data_witness: DataWitness)
         requires
             self.wf(),
-            witness.element() == NodeData::Node(delete_data),
-            witness.instance_id() == self.instance.id(),
+            data_witness.witness.element() == NodeData::Node(data_witness.data),
+            data_witness.witness.instance_id() == self.instance.id(),
         ensures
             self.wf()
     {
+        let witness = data_witness.witness;
+        let delete_data = data_witness.data;
         let mut dummy_node_perm = self.acquire_lock();
         let mut dummy_node_view = self.cell.borrow(Tracked(dummy_node_perm.borrow_mut()));
 
@@ -1098,7 +1093,7 @@ fn main() {
     let linked_list = Arc::new(LinkedList::new());
 
     let elements = [7,3,8,9,4,2,1,15,13,2,12,5,5,5,5,5];
-    let mut join_handles: Vec<JoinHandle<InsertReturn>> = Vec::new();
+    let mut join_handles: Vec<JoinHandle<Option<DataWitness>>> = Vec::new();
 
     let mut i = 0;
     while i < elements.len()
@@ -1109,25 +1104,23 @@ fn main() {
             forall|j: int, ret|
                 0 <= j < i ==> join_handles@.index(j).predicate(ret) ==>
                     (
-
-                        (ret.witness.is_some() <==> ret.data.is_some()) &&
                         (
-                            ret.witness.is_some() ==> (
-                                ret.witness.unwrap().instance_id() == linked_list.instance@.id() &&
-                                ret.witness.unwrap().element() == NodeData::Node(elements[i as int]) &&
-                                ret.data.unwrap() == elements[i as int] &&
+                            ret.is_some() ==> (
+                                ret.unwrap().witness.instance_id() == linked_list.instance@.id() &&
+                                ret.unwrap().witness.element() == NodeData::Node(elements[j]) &&
+                                ret.unwrap().data == elements[j] &&
                                 exists |locked_node: LockedNode| #![auto]
                                     locked_node.wf() && 
-                                    locked_node.instance@.id() == ret.witness.unwrap().instance_id() &&
-                                    locked_node.data_view == ret.witness.unwrap().element()
+                                    locked_node.instance@.id() == ret.unwrap().witness.instance_id() &&
+                                    locked_node.data_view == ret.unwrap().witness.element()
                             )
                         ) &&
                         (
-                            ret.witness.is_none() ==> 
+                            ret.is_none() ==> 
                                 exists |locked_node: LockedNode| #![auto]
                                     locked_node.wf() && 
                                     locked_node.instance == linked_list.instance &&
-                                    locked_node.data_view == NodeData::Node(elements[i as int])
+                                    locked_node.data_view == NodeData::Node(elements[j])
                         )
                     )
         decreases
@@ -1138,22 +1131,21 @@ fn main() {
         let linked_list_clone = linked_list.clone();
         let insert_data = elements[i];
         let join_handle = spawn(
-            (move || -> (insert_return: InsertReturn)
+            (move || -> (data_witness: Option<DataWitness>)
                 requires
                     linked_list_clone.wf()
                 ensures
                     linked_list_clone.wf(),
-                    insert_return.witness.is_some() <==> insert_return.data.is_some(),
-                    insert_return.witness.is_some() ==> (
-                        insert_return.witness.unwrap().instance_id() == linked_list_clone.instance@.id() &&
-                        insert_return.witness.unwrap().element() == NodeData::Node(insert_data) &&
-                        insert_return.data.unwrap() == insert_data &&
+                    data_witness.is_some() ==> (
+                        data_witness.unwrap().witness.instance_id() == linked_list_clone.instance@.id() &&
+                        data_witness.unwrap().witness.element() == NodeData::Node(insert_data) &&
+                        data_witness.unwrap().data == insert_data &&
                         exists |locked_node: LockedNode| #![auto]
                             locked_node.wf() && 
-                            locked_node.instance@.id() == insert_return.witness.unwrap().instance_id() &&
-                            locked_node.data_view == insert_return.witness.unwrap().element()
+                            locked_node.instance@.id() == data_witness.unwrap().witness.instance_id() &&
+                            locked_node.data_view == data_witness.unwrap().witness.element()
                     ),
-                    insert_return.witness.is_none() ==> (
+                    data_witness.is_none() ==> (
                         (
                             exists |locked_node: LockedNode| #![auto]
                                 locked_node.wf() && 
@@ -1170,77 +1162,108 @@ fn main() {
         i = i + 1;
     }
 
-    // let mut witness_tokens: Vec<Tracked<machine::node_witnesses>> = Vec::new();
-    // let mut i = 0;
-    // while i < elements.len()
-    //     invariant
-    //         0 <= i <= elements.len(),
-    //         join_handles.len() == elements.len() - i,
-    //         linked_list.wf(),
-    //         forall|j: int, ret|
-    //             0 <= j < join_handles.len() ==> join_handles@.index(j).predicate(ret) ==>
-    //                 (
-    //                     ret.is_some() ==> (
-    //                         ret.unwrap().instance_id() == linked_list.instance@.id() &&
-    //                         ret.unwrap().element() == NodeData::Node(elements[j]) &&
-    //                         exists |locked_node: LockedNode| #![auto]
-    //                             locked_node.wf() && 
-    //                             locked_node.instance@.id() == ret.unwrap().instance_id() &&
-    //                             locked_node.data_view == ret.unwrap().element()
-    //                     )
-    //                 ) &&
-    //                 (
-    //                     ret.is_none() ==> (
-    //                         exists |locked_node: LockedNode| #![auto]
-    //                             locked_node.wf() && 
-    //                             locked_node.instance == linked_list.instance &&
-    //                             locked_node.data_view == NodeData::Node(elements[j])
-    //                     )
-    //                 )
-    //     decreases
-    //         elements.len() - i
-    // {
-    //     let join_handle = join_handles.pop().unwrap();
-    //     match join_handle.join() {
-    //         Result::Ok(token) => {
-    //             if token.is_some() {
-    //                 witness_tokens.push(token.unwrap())
-    //             }
-    //         },
-    //         _ => {
-    //             return ;
-    //         },
-    //     };
-    //     i = i + 1;
-    // }
+    let mut data_witnesses: Vec<DataWitness> = Vec::new();
+    let mut i = 0;
+    while i < elements.len()
+        invariant
+            0 <= i <= elements.len(),
+            join_handles.len() == elements.len() - i,
+            linked_list.wf(),
+            forall|j: int, ret|
+                0 <= j < join_handles.len() ==> join_handles@.index(j).predicate(ret) ==>
+                    (
+                        (
+                            ret.is_some() ==> (
+                                ret.unwrap().witness.instance_id() == linked_list.instance@.id() &&
+                                ret.unwrap().witness.element() == NodeData::Node(elements[j]) &&
+                                ret.unwrap().data == elements[j] &&
+                                exists |locked_node: LockedNode| #![auto]
+                                    locked_node.wf() && 
+                                    locked_node.instance@.id() == ret.unwrap().witness.instance_id() &&
+                                    locked_node.data_view == ret.unwrap().witness.element()
+                            )
+                        ) &&
+                        (
+                            ret.is_none() ==> 
+                                exists |locked_node: LockedNode| #![auto]
+                                    locked_node.wf() && 
+                                    locked_node.instance == linked_list.instance &&
+                                    locked_node.data_view == NodeData::Node(elements[j])
+                        )
+                    ),
+            forall |j: int| #![auto]
+                0 <= j < data_witnesses.len() ==> (
+                    data_witnesses[j].witness.element() == NodeData::Node(data_witnesses[j].data) &&
+                    data_witnesses[j].witness.instance_id() == linked_list.instance.id()
+                )
+                    
+        decreases
+            elements.len() - i
+    {
+        let join_handle = join_handles.pop().unwrap();
+        match join_handle.join() {
+            Result::Ok(token) => {
+                if token.is_some() {
+                    data_witnesses.push(token.unwrap())
+                }
+            },
+            _ => {
+                return ;
+            },
+        };
+        i = i + 1;
+    }
 
 
     // Deletion
-    // let mut i = 0;
-    // while i < witness_tokens.len()
-    //     invariant
-    //         0 <= i <= witness_tokens.len(),
-    //         linked_list.wf(),
-    //     decreases
-    //         witness_tokens.len() - i
-    // {
-    //     let linked_list_clone = linked_list.clone();
-    //     let witness = witness_tokens[i];
-    //     let delete_data = witness.element().get();
-    //     let join_handle = spawn(
-    //         (move ||
-    //             requires
-    //                 linked_list_clone.wf(),
-    //                 witness.element() == NodeData::Node(delete_data),
-    //                 witness.instance_id() == linked_list_clone.instance.id(),
-    //             ensures
-    //                 linked_list_clone.wf()
-    //             {
-    //                 linked_list_clone.delete(delete_data, witness)
-    //             }
-    //         )
-    //     );
-    //     i = i + 1;
-    // }
+    let original_data_witnesses_len = data_witnesses.len();
+    let mut join_handles: Vec<JoinHandle<()>> = Vec::new();
+
+    while 0 < data_witnesses.len()
+        invariant
+            linked_list.wf(),
+            join_handles.len() == original_data_witnesses_len - data_witnesses.len(),
+            forall |j: int| #![auto]
+                0 <= j < data_witnesses.len() ==> (
+                    data_witnesses[j].witness.element() == NodeData::Node(data_witnesses[j].data) &&
+                    data_witnesses[j].witness.instance_id() == linked_list.instance.id()
+                )
+        decreases
+            data_witnesses.len()
+    {
+        let linked_list_clone = linked_list.clone();
+        let data_witness = data_witnesses.pop().unwrap();
+
+        let join_handle = spawn(
+            (move ||
+                requires
+                    linked_list_clone.wf(),
+                    data_witness.witness.element() == NodeData::Node(data_witness.data),
+                    data_witness.witness.instance_id() == linked_list_clone.instance.id(),
+                ensures
+                    linked_list_clone.wf()
+                {
+                    linked_list_clone.delete(data_witness)
+                }
+            )
+        );
+
+        join_handles.push(join_handle);
+    }
+
+    while 0 < join_handles.len()
+        invariant
+            linked_list.wf(),             
+        decreases
+            join_handles.len()
+    {
+        let join_handle = join_handles.pop().unwrap();
+        match join_handle.join() {
+            Result::Ok(token) => {},
+            _ => {
+                return ;
+            },
+        };
+    }
 }
 }

@@ -14,7 +14,6 @@ use vstd::set::*;
 
 verus! {
 
-#[derive(PartialEq)]
 pub enum NodeData {
     Dummy,
     Node(u32)
@@ -562,32 +561,34 @@ impl LockedNode {
     }
 }
 
+pub struct InsertReturn {
+    data: Option<u32>,
+    witness: Option<Tracked<machine::node_witnesses>>
+}
+
 impl LinkedList {
-    fn insert(self: Arc<Self>, insert_data: u32) -> (witness: Option<Tracked<machine::node_witnesses>>)
+    fn insert(self: Arc<Self>, insert_data: u32) -> (insert_return: InsertReturn)
         requires
             self.wf()
         ensures
             self.wf(),
-            witness.is_some() ==> (
-                witness.unwrap().instance_id() == self.instance@.id() &&
-                witness.unwrap().element() == NodeData::Node(insert_data) &&
+            insert_return.witness.is_some() <==> insert_return.data.is_some(),
+            insert_return.witness.is_some() ==> (
+                insert_return.witness.unwrap().instance_id() == self.instance@.id() &&
+                insert_return.witness.unwrap().element() == NodeData::Node(insert_data) &&
+                insert_return.data.unwrap() == insert_data &&
                 exists |locked_node: LockedNode| #![auto]
                     locked_node.wf() && 
-                    locked_node.instance@.id() == witness.unwrap().instance_id() &&
-                    locked_node.data_view == witness.unwrap().element()
+                    locked_node.instance@.id() == insert_return.witness.unwrap().instance_id() &&
+                    locked_node.data_view == insert_return.witness.unwrap().element()
             ),
-            witness.is_none() ==> (
+            insert_return.witness.is_none() ==> (
                 (
                     exists |locked_node: LockedNode| #![auto]
                         locked_node.wf() && 
                         locked_node.instance == self.instance &&
                         locked_node.data_view == NodeData::Node(insert_data)
-                ) //&&
-                // (
-                //     exists |witness: machine::node_witnesses| #![auto]
-                //         witness.instance_id() == self.instance@.id() &&
-                //         witness.element() == NodeData::Node(insert_data)
-                // )
+                )
             )
     {
         let mut dummy_node_perm = self.acquire_lock();
@@ -630,7 +631,11 @@ impl LinkedList {
 
             self.cell.replace(Tracked(dummy_node_perm.borrow_mut()), dummy_node);
             self.release_lock(dummy_node_perm);
-            return Some(Tracked(new_node_witness));
+
+            return InsertReturn {
+                data: Some(insert_data),
+                witness: Some(Tracked(new_node_witness))
+            };
         } 
         // Otherwise, we need to begin the loop of grabbing the next lock
         else {
@@ -648,7 +653,10 @@ impl LinkedList {
                 if (insert_data == current_node_data) {
                     self.release_lock(dummy_node_perm);
                     current_locked_node.release_lock(current_node_perm);
-                    return None;
+                    return InsertReturn {
+                        data: None,
+                        witness: None
+                    };
                 }
 
                 // Check if we need to insert inbetween dummy and first node:
@@ -691,7 +699,10 @@ impl LinkedList {
 
                     self.release_lock(dummy_node_perm);
                     current_locked_node.release_lock(current_node_perm);
-                    return Some(Tracked(new_node_witness));
+                    return InsertReturn {
+                        data: Some(insert_data),
+                        witness: Some(Tracked(new_node_witness))
+                    };
                 }
 
                 // And release the dummy node lock
@@ -760,7 +771,10 @@ impl LinkedList {
 
                     current_locked_node.cell.replace(Tracked(current_node_perm.borrow_mut()), old_tail_node);
                     current_locked_node.release_lock(current_node_perm);
-                    return Some(Tracked(new_node_witness));
+                    return InsertReturn {
+                        data: Some(insert_data),
+                        witness: Some(Tracked(new_node_witness))
+                    };
                 } 
                 
                 else {
@@ -771,16 +785,12 @@ impl LinkedList {
 
                     // Check if we already have the node:
                     if (insert_data == next_node_data) {
-                        // assert(
-                        //     (
-                        //         exists |witness: machine::node_witnesses| #![auto]
-                        //             witness.instance_id() == next_locked_node.instance@.id() &&
-                        //             witness.element() == NodeData::Node(insert_data)
-                        //     )
-                        // );
                         current_locked_node.release_lock(current_node_perm);
                         next_locked_node.release_lock(next_node_perm);
-                        return None;
+                        return InsertReturn {
+                            data: None,
+                            witness: None
+                        };
                     } 
 
                     // Check if we need to insert here
@@ -822,7 +832,10 @@ impl LinkedList {
 
                         current_locked_node.release_lock(current_node_perm);
                         next_locked_node.release_lock(next_node_perm);
-                        return Some(Tracked(new_node_witness));
+                        return InsertReturn {
+                            data: Some(insert_data),
+                            witness: Some(Tracked(new_node_witness))
+                        };
                     } 
 
                     // Otherwise, we give up the previous lock, and loop again!
@@ -1085,7 +1098,7 @@ fn main() {
     let linked_list = Arc::new(LinkedList::new());
 
     let elements = [7,3,8,9,4,2,1,15,13,2,12,5,5,5,5,5];
-    let mut join_handles: Vec<JoinHandle<Option<Tracked<machine::node_witnesses>>>> = Vec::new();
+    let mut join_handles: Vec<JoinHandle<InsertReturn>> = Vec::new();
 
     let mut i = 0;
     while i < elements.len()
@@ -1096,47 +1109,57 @@ fn main() {
             forall|j: int, ret|
                 0 <= j < i ==> join_handles@.index(j).predicate(ret) ==>
                     (
-                        ret.is_some() ==> (
-                            ret.unwrap().instance_id() == linked_list.instance@.id() &&
-                            ret.unwrap().element() == NodeData::Node(elements[j]) &&
-                            exists |locked_node: LockedNode| #![auto]
-                                locked_node.wf() && 
-                                locked_node.instance@.id() == ret.unwrap().instance_id() &&
-                                locked_node.data_view == ret.unwrap().element()
-                        )
-                    ) &&
-                    (
-                        ret.is_none() ==> (
-                            exists |locked_node: LockedNode| #![auto]
-                                locked_node.wf() && 
-                                locked_node.instance == linked_list.instance &&
-                                locked_node.data_view == NodeData::Node(elements[j])
+
+                        (ret.witness.is_some() <==> ret.data.is_some()) &&
+                        (
+                            ret.witness.is_some() ==> (
+                                ret.witness.unwrap().instance_id() == linked_list.instance@.id() &&
+                                ret.witness.unwrap().element() == NodeData::Node(elements[i as int]) &&
+                                ret.data.unwrap() == elements[i as int] &&
+                                exists |locked_node: LockedNode| #![auto]
+                                    locked_node.wf() && 
+                                    locked_node.instance@.id() == ret.witness.unwrap().instance_id() &&
+                                    locked_node.data_view == ret.witness.unwrap().element()
+                            )
+                        ) &&
+                        (
+                            ret.witness.is_none() ==> 
+                                exists |locked_node: LockedNode| #![auto]
+                                    locked_node.wf() && 
+                                    locked_node.instance == linked_list.instance &&
+                                    locked_node.data_view == NodeData::Node(elements[i as int])
                         )
                     )
         decreases
             elements.len() - i
     {
+
+        // Insertion
         let linked_list_clone = linked_list.clone();
         let insert_data = elements[i];
         let join_handle = spawn(
-            (move || -> (witness: Option<Tracked<machine::node_witnesses>>)
+            (move || -> (insert_return: InsertReturn)
                 requires
                     linked_list_clone.wf()
                 ensures
                     linked_list_clone.wf(),
-                    witness.is_some() ==> (
-                        witness.unwrap().instance_id() == linked_list.instance@.id() &&
-                        witness.unwrap().element() == NodeData::Node(insert_data) &&
+                    insert_return.witness.is_some() <==> insert_return.data.is_some(),
+                    insert_return.witness.is_some() ==> (
+                        insert_return.witness.unwrap().instance_id() == linked_list_clone.instance@.id() &&
+                        insert_return.witness.unwrap().element() == NodeData::Node(insert_data) &&
+                        insert_return.data.unwrap() == insert_data &&
                         exists |locked_node: LockedNode| #![auto]
                             locked_node.wf() && 
-                            locked_node.instance@.id() == witness.unwrap().instance_id() &&
-                            locked_node.data_view == witness.unwrap().element()
+                            locked_node.instance@.id() == insert_return.witness.unwrap().instance_id() &&
+                            locked_node.data_view == insert_return.witness.unwrap().element()
                     ),
-                    witness.is_none() ==> (
-                        exists |locked_node: LockedNode| #![auto]
-                            locked_node.wf() && 
-                            locked_node.instance == linked_list.instance &&
-                            locked_node.data_view == NodeData::Node(insert_data)
+                    insert_return.witness.is_none() ==> (
+                        (
+                            exists |locked_node: LockedNode| #![auto]
+                                locked_node.wf() && 
+                                locked_node.instance == linked_list_clone.instance &&
+                                locked_node.data_view == NodeData::Node(insert_data)
+                        )
                     )
                 {
                     linked_list_clone.insert(elements[i])
@@ -1147,48 +1170,77 @@ fn main() {
         i = i + 1;
     }
 
-    let mut witness_tokens: Vec<Tracked<machine::node_witnesses>> = Vec::new();
-    let mut i = 0;
-    while i < elements.len()
-        invariant
-            0 <= i <= elements.len(),
-            join_handles.len() == elements.len() - i,
-            linked_list.wf(),
-            forall|j: int, ret|
-                0 <= j < join_handles.len() ==> join_handles@.index(j).predicate(ret) ==>
-                    (
-                        ret.is_some() ==> (
-                            ret.unwrap().instance_id() == linked_list.instance@.id() &&
-                            ret.unwrap().element() == NodeData::Node(elements[j]) &&
-                            exists |locked_node: LockedNode| #![auto]
-                                locked_node.wf() && 
-                                locked_node.instance@.id() == ret.unwrap().instance_id() &&
-                                locked_node.data_view == ret.unwrap().element()
-                        )
-                    ) &&
-                    (
-                        ret.is_none() ==> (
-                            exists |locked_node: LockedNode| #![auto]
-                                locked_node.wf() && 
-                                locked_node.instance == linked_list.instance &&
-                                locked_node.data_view == NodeData::Node(elements[j])
-                        )
-                    )
-        decreases
-            elements.len() - i
-    {
-        let join_handle = join_handles.pop().unwrap();
-        match join_handle.join() {
-            Result::Ok(token) => {
-                if token.is_some() {
-                    witness_tokens.push(token.unwrap())
-                }
-            },
-            _ => {
-                return ;
-            },
-        };
-        i = i + 1;
-    }
+    // let mut witness_tokens: Vec<Tracked<machine::node_witnesses>> = Vec::new();
+    // let mut i = 0;
+    // while i < elements.len()
+    //     invariant
+    //         0 <= i <= elements.len(),
+    //         join_handles.len() == elements.len() - i,
+    //         linked_list.wf(),
+    //         forall|j: int, ret|
+    //             0 <= j < join_handles.len() ==> join_handles@.index(j).predicate(ret) ==>
+    //                 (
+    //                     ret.is_some() ==> (
+    //                         ret.unwrap().instance_id() == linked_list.instance@.id() &&
+    //                         ret.unwrap().element() == NodeData::Node(elements[j]) &&
+    //                         exists |locked_node: LockedNode| #![auto]
+    //                             locked_node.wf() && 
+    //                             locked_node.instance@.id() == ret.unwrap().instance_id() &&
+    //                             locked_node.data_view == ret.unwrap().element()
+    //                     )
+    //                 ) &&
+    //                 (
+    //                     ret.is_none() ==> (
+    //                         exists |locked_node: LockedNode| #![auto]
+    //                             locked_node.wf() && 
+    //                             locked_node.instance == linked_list.instance &&
+    //                             locked_node.data_view == NodeData::Node(elements[j])
+    //                     )
+    //                 )
+    //     decreases
+    //         elements.len() - i
+    // {
+    //     let join_handle = join_handles.pop().unwrap();
+    //     match join_handle.join() {
+    //         Result::Ok(token) => {
+    //             if token.is_some() {
+    //                 witness_tokens.push(token.unwrap())
+    //             }
+    //         },
+    //         _ => {
+    //             return ;
+    //         },
+    //     };
+    //     i = i + 1;
+    // }
+
+
+    // Deletion
+    // let mut i = 0;
+    // while i < witness_tokens.len()
+    //     invariant
+    //         0 <= i <= witness_tokens.len(),
+    //         linked_list.wf(),
+    //     decreases
+    //         witness_tokens.len() - i
+    // {
+    //     let linked_list_clone = linked_list.clone();
+    //     let witness = witness_tokens[i];
+    //     let delete_data = witness.element().get();
+    //     let join_handle = spawn(
+    //         (move ||
+    //             requires
+    //                 linked_list_clone.wf(),
+    //                 witness.element() == NodeData::Node(delete_data),
+    //                 witness.instance_id() == linked_list_clone.instance.id(),
+    //             ensures
+    //                 linked_list_clone.wf()
+    //             {
+    //                 linked_list_clone.delete(delete_data, witness)
+    //             }
+    //         )
+    //     );
+    //     i = i + 1;
+    // }
 }
 }

@@ -842,17 +842,13 @@ impl LinkedList {
             witness.element() == NodeData::Node(delete_data),
             witness.instance_id() == self.instance.id(),
         ensures
-            self.wf(),
-            forall |witness: machine::node_witnesses|
-                witness.instance_id() == self.instance.id() ==>
-                    witness.element() != NodeData::Node(delete_data)
+            self.wf()
     {
         let mut dummy_node_perm = self.acquire_lock();
         let mut dummy_node_view = self.cell.borrow(Tracked(dummy_node_perm.borrow_mut()));
 
         if (dummy_node_view.head.is_none()) {
             // This is not possible if we have a witness for a node:
-            assume(false);
             return;
         }
 
@@ -889,10 +885,6 @@ impl LinkedList {
                     proof {
                         new_dummy_token = current_locked_node.instance.borrow().delete_tail_after_dummy_node(delete_data, old_dummy_node_token.get(), deleted_tail_token.get(), witness.get());
                     }
-
-                //     assert(forall |witness: machine::node_witnesses|
-                // witness.instance_id() == self.instance.id() ==>
-                //     witness.element() != NodeData::Node(delete_data));
 
                     old_dummy_node.map_token = Some(Tracked(new_dummy_token));
                     old_dummy_node.head = None;
@@ -941,13 +933,11 @@ impl LinkedList {
             // We do not want to delete the first node.
             // It is not possible for there to be no more nodes - we have a witness
             if (current_node_view.next_node.as_ref().is_none()) {
-                assume(false);
                 return;
             }
             // We also know that the node we want to delete must be
             // larger than the node we are currently on
             if (current_node_data > delete_data) {
-                assume(false);
                 return;
             }
         }
@@ -1068,7 +1058,6 @@ impl LinkedList {
                 // current_node_data < delete_data < next_node_data
                 // Which implies we are trying to delete a node that doesn't exist
                 // but we have a witness.
-                assume(false);
                 return;
             }
 
@@ -1077,7 +1066,6 @@ impl LinkedList {
                 if (next_node_view.next_node.is_none()) {
                     // if next_node has no successor, then we have reached the end without deleting
                     // this is impossible as we have a witness
-                    assume(false);
                     return;
                 }
 

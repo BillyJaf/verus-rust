@@ -20,39 +20,6 @@ pub enum NodeData {
     Node(u32)
 }
 
-impl NodeData {
-    pub fn get(&self) -> (value: u32) 
-        requires
-            *self != NodeData::Dummy
-        ensures
-            forall |i: u32| #![auto] *self == NodeData::Node(i) ==> value == i
-    {
-        match self {
-            NodeData::Node(i) => *i,
-            _ => u32::MIN
-        }
-    }
-
-    pub fn clone(&self) -> (cloned: Self) 
-        ensures
-            *self == cloned
-    {
-        match self {
-            NodeData::Dummy => NodeData::Dummy,
-            NodeData::Node(i) => NodeData::Node(*i),
-        }
-    }
-
-    pub open spec fn spec_lt(self, other: Self) -> bool {
-        match (self, other) {
-            (NodeData::Dummy, NodeData::Dummy) => false,
-            (NodeData::Dummy, _) => true,
-            (_, NodeData::Dummy) => false,
-            (NodeData::Node(a), NodeData::Node(b)) => a < b,
-        }
-    }
-}
-
 tokenized_state_machine!{
     machine {
         fields {
@@ -206,10 +173,11 @@ pub struct DummyNode {
 }
 
 struct_with_invariants!{
-    pub struct LockedDummyNode {
+    pub struct LinkedList {
         pub atomic: AtomicBool<_, Option<pcell::PointsTo<DummyNode>>, _>,
         pub cell: pcell::PCell<DummyNode>,
         pub instance: Tracked<machine::Instance>,
+
     }
 
     spec fn wf(&self) -> bool 
@@ -232,7 +200,7 @@ struct_with_invariants!{
     }
 }
 
-impl LockedDummyNode {
+impl LinkedList {
     fn new() -> (locked_dummy_node: Self)
         ensures 
             locked_dummy_node.wf()
@@ -361,6 +329,7 @@ impl LockedNode {
         ensures 
             self.wf(),
             points_to@.id() == self.cell.id(),
+            points_to@.value().data == self.data_view,
             points_to@.value().next_node.is_some() ==> (
                 points_to@.value().next_node.unwrap().wf() &&
                 points_to@.value().next_node.unwrap().instance == self.instance &&
@@ -387,6 +356,7 @@ impl LockedNode {
         requires
             self.wf(),
             points_to@.id() == self.cell.id(),
+            points_to@.value().data == self.data_view,
             points_to@.value().next_node.is_some() ==> (
                 points_to@.value().next_node.unwrap().wf() && 
                 points_to@.value().next_node.unwrap().instance == self.instance &&
@@ -405,6 +375,7 @@ impl LockedNode {
 }
 
 fn main() {
-    // let linked_list = LinkedList::new(Tracked(initialized), Tracked(instance));
+    let linked_list = LinkedList::new();
+    
 }
 }

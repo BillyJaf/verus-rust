@@ -836,10 +836,10 @@ impl LinkedList {
         }
     }
 
-    fn delete(self: Arc<Self>, witness: Tracked<machine::node_witnesses>)
+    fn delete(self: Arc<Self>, delete_data: u32, witness: Tracked<machine::node_witnesses>)
         requires
             self.wf(),
-            witness.element() != NodeData::Dummy,
+            witness.element() == NodeData::Node(delete_data),
         ensures
             self.wf()
     {
@@ -858,7 +858,7 @@ impl LinkedList {
             let mut current_node_view = current_locked_node.cell.borrow(Tracked(current_node_perm.borrow_mut()));
 
             // Check if we are deleting the first node:
-            if (witness.element().get() == current_locked_node.data_view.get()) {
+            if (delete_data == current_locked_node.data_view.get()) {
                 // Check if this is the tail:
                 if (current_node_view.next_node.is_none()) {
                     let temp_dummy_node = DummyNode {
@@ -882,8 +882,24 @@ impl LinkedList {
                     let tracked new_dummy_token;
 
                     proof {
+                        // remove nodes -= [NodeData::Dummy => Some(NodeData::Node(delete_node))];
+                        // remove nodes -= [NodeData::Node(delete_node) => None];
+                        // remove node_witnesses -= set {NodeData::Node(delete_node)};
+                        // add nodes += [NodeData::Dummy => None];
+
+                        assert(old_dummy_node_token.key() == NodeData::Dummy && old_dummy_node_token.value() == Some(NodeData::Node(current_node_view.data)));
+                        assert(deleted_tail_token.key() == NodeData::Node(current_node_view.data) && deleted_tail_token.value() == None::<NodeData>);
+
                         new_dummy_token = current_locked_node.instance.borrow().delete_tail_after_dummy_node(current_node_view.data, old_dummy_node_token.get(), deleted_tail_token.get(), witness.get());
                     }
+
+                    old_dummy_node.map_token = Some(Tracked(new_dummy_token));
+                    old_dummy_node.head = None;
+                    self.cell.replace(Tracked(dummy_node_perm.borrow_mut()), old_dummy_node);
+
+                    self.release_lock(dummy_node_perm);
+                    return;
+
 
 
 

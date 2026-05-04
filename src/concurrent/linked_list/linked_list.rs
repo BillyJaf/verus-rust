@@ -14,6 +14,7 @@ use vstd::set::*;
 
 verus! {
 
+#[derive(PartialEq)]
 pub enum NodeData {
     Dummy,
     Node(u32)
@@ -576,10 +577,17 @@ impl LinkedList {
                     locked_node.data_view == witness.unwrap().element()
             ),
             witness.is_none() ==> (
-                exists |locked_node: LockedNode| #![auto]
-                    locked_node.wf() && 
-                    locked_node.instance == self.instance &&
-                    locked_node.data_view == NodeData::Node(insert_data)
+                (
+                    exists |locked_node: LockedNode| #![auto]
+                        locked_node.wf() && 
+                        locked_node.instance == self.instance &&
+                        locked_node.data_view == NodeData::Node(insert_data)
+                ) //&&
+                // (
+                //     exists |witness: machine::node_witnesses| #![auto]
+                //         witness.instance_id() == self.instance@.id() &&
+                //         witness.element() == NodeData::Node(insert_data)
+                // )
             )
     {
         let mut dummy_node_perm = self.acquire_lock();
@@ -763,6 +771,13 @@ impl LinkedList {
 
                     // Check if we already have the node:
                     if (insert_data == next_node_data) {
+                        // assert(
+                        //     (
+                        //         exists |witness: machine::node_witnesses| #![auto]
+                        //             witness.instance_id() == next_locked_node.instance@.id() &&
+                        //             witness.element() == NodeData::Node(insert_data)
+                        //     )
+                        // );
                         current_locked_node.release_lock(current_node_perm);
                         next_locked_node.release_lock(next_node_perm);
                         return None;
@@ -819,6 +834,77 @@ impl LinkedList {
                 }
             }
         }
+    }
+
+    fn delete(self: Arc<Self>, witness: Tracked<machine::node_witnesses>)
+        requires
+            self.wf(),
+            witness.element() != NodeData::Dummy,
+        ensures
+            self.wf()
+    {
+        let mut dummy_node_perm = self.acquire_lock();
+        let mut dummy_node_view = self.cell.borrow(Tracked(dummy_node_perm.borrow_mut()));
+        if (dummy_node_view.head.is_none()) {
+            // This is not possible if we have a witness for a node:
+            return;
+        }
+
+        let mut current_locked_node = dummy_node_view.head.as_ref().unwrap().clone();
+        let mut current_node_perm = current_locked_node.acquire_lock();
+        // Indent so that the view is dropped before the loop
+        // We want a fresh view every loop.
+        {
+            let mut current_node_view = current_locked_node.cell.borrow(Tracked(current_node_perm.borrow_mut()));
+
+            // Check if we are deleting the first node:
+            if (witness.element().get() == current_locked_node.data_view.get()) {
+                // Check if this is the tail:
+                if (current_node_view.next_node.is_none()) {
+                    let temp_dummy_node = DummyNode {
+                        head: None,
+                        map_token: None
+                    };
+
+                    let mut old_dummy_node = self.cell.replace(Tracked(dummy_node_perm.borrow_mut()), temp_dummy_node);
+                    let old_dummy_node_token = old_dummy_node.map_token.unwrap();
+
+                    let temp_tail_node = Node {
+                        data: 0,
+                        next_node: None,
+                        map_token: None
+                    };
+
+                    let mut deleted_tail_node = current_locked_node.cell.replace(Tracked(current_node_perm.borrow_mut()), temp_tail_node);
+                    let deleted_tail_token = deleted_tail_node.map_token.unwrap();
+                    
+
+                    let tracked new_dummy_token;
+
+                    proof {
+                        new_dummy_token = current_locked_node.instance.borrow().delete_tail_after_dummy_node(current_node_view.data, old_dummy_node_token.get(), deleted_tail_token.get(), witness.get());
+                    }
+
+
+
+                    // let mut dummy_node = self.cell.replace(Tracked(dummy_node_perm.borrow_mut()), temp_dummy_node);
+                }
+
+                // Otherwise we are deleting between dummy and 
+                else {
+
+                }
+
+                self.release_lock(dummy_node_perm);
+                current_locked_node.release_lock(current_node_perm);
+                return;
+            }
+            
+
+            // And release the dummy node lock
+            self.release_lock(dummy_node_perm);
+        }
+
     }
 }
 

@@ -103,6 +103,19 @@ tokenized_state_machine!{
                                 )
                         ) &&
 
+                        // No two nodes point to the same data:
+                        (
+                            forall |i: u32, j: u32| #![auto] 
+                                (
+                                    self.nodes.dom().contains(NodeData::Node(i)) &&
+                                    self.nodes.dom().contains(NodeData::Node(j)) &&
+                                    self.nodes[NodeData::Node(i)] == self.nodes[NodeData::Node(j)]
+                                ) ==>
+                                (
+                                    i == j
+                                )
+                        ) &&
+
                         // // We must assert that for any mapping [a => c], there are no entries in the map
                         // // with key b such that a < b < c. 
                         (

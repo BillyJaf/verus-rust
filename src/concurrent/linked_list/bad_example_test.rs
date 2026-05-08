@@ -2,6 +2,7 @@ use verus_state_machines_macros::tokenized_state_machine;
 use verus_builtin::*;
 use verus_builtin_macros::*;
 use vstd::set::*;
+use vstd::tokens::ElementToken;
 
 verus! {
 
@@ -78,8 +79,8 @@ fn main() {
         assert(
             !(
                 exists |token: machine::bools|
-                    token.instance_id() == instance.id() ==>
-                    token.element() == true
+                    token.instance_id() == instance.id() &&
+                    token.element() == false
             )
         )
     }

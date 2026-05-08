@@ -9,7 +9,7 @@ use vstd::modes::*;
 use vstd::prelude::*;
 use vstd::thread::*;
 use vstd::{pervasive::*, prelude::*, *};
-use vstd::cell::pcell;
+use vstd::cell::pcell_maybe_uninit as un;
 use vstd::set::*;
 
 verus! {
@@ -20,6 +20,16 @@ pub enum NodeData {
 }
 
 impl NodeData {
+    pub fn clone(&self) -> (cloned: Self) 
+        ensures
+            *self == cloned
+    {
+        match self {
+            NodeData::Dummy => NodeData::Dummy,
+            NodeData::Node(i) => NodeData::Node(*i),
+        }
+    }
+
     pub fn get(&self) -> (value: u32) 
         requires
             *self != NodeData::Dummy
@@ -90,6 +100,19 @@ tokenized_state_machine!{
                                     self.nodes[NodeData::Node(i)] != None::<NodeData>
                                 ) ==> (
                                     (exists |j: u32| #![auto] self.nodes[NodeData::Node(i)] == Some(NodeData::Node(j)) && i < j)
+                                )
+                        ) &&
+
+                        // No two nodes point to the same data:
+                        (
+                            forall |i: u32, j: u32| #![auto] 
+                                (
+                                    self.nodes.dom().contains(NodeData::Node(i)) &&
+                                    self.nodes.dom().contains(NodeData::Node(j)) &&
+                                    self.nodes[NodeData::Node(i)] == self.nodes[NodeData::Node(j)]
+                                ) ==>
+                                (
+                                    i == j
                                 )
                         ) &&
 
@@ -290,6 +313,45 @@ tokenized_state_machine!{
         #[inductive(delete_inbetween_normal_and_normal)]
         fn delete_inbetween_normal_and_normal_inductive(pre: Self, post: Self, delete_node: u32, lower_node: u32, upper_node: u32) {
         }
+
+        property!{
+            no_smaller_token_exists(first_node_data: u32) {
+                have nodes >= [NodeData::Dummy => Some(NodeData::Node(first_node_data))];
+                birds_eye let n = pre.nodes;
+
+                assert(
+                    forall |data: u32| #![auto]
+                        data < first_node_data ==>
+                            !n.dom().contains(NodeData::Node(data))
+                );
+            }
+        }
+
+        property!{
+            no_larger_token_exists(last_node_data: u32) {
+                have nodes >= [NodeData::Node(last_node_data) => None];
+                birds_eye let n = pre.nodes;
+
+                assert(
+                    forall |data: u32| #![auto]
+                        data > last_node_data ==>
+                            !n.dom().contains(NodeData::Node(data))
+                );
+            }
+        }
+
+        property!{
+            no_inbetween_token_exists(lower_node_data: u32, upper_node_data: u32) {
+                have nodes >= [NodeData::Node(lower_node_data) => Some(NodeData::Node(upper_node_data))];
+                birds_eye let n = pre.nodes;
+
+                assert(
+                    forall |data: u32| #![auto]
+                        (lower_node_data < data && data < upper_node_data) ==>
+                            !n.dom().contains(NodeData::Node(data))
+                );
+            }
+        }
     }
 }
 
@@ -300,14 +362,14 @@ pub struct DummyNode {
 
 struct_with_invariants!{
     pub struct LinkedList {
-        pub atomic: AtomicBool<_, Option<pcell::PointsTo<DummyNode>>, _>,
-        pub cell: pcell::PCell<DummyNode>,
+        pub atomic: AtomicBool<_, Option<un::PCell::PointsTo<DummyNode>>, _>,
+        pub cell: un::PCell::PCell<DummyNode>,
         pub instance: Tracked<machine::Instance>,
     }
 
     spec fn wf(&self) -> bool 
     {
-        invariant on atomic with (cell, instance) is (v: bool, g: Option<pcell::PointsTo<DummyNode>>) {
+        invariant on atomic with (cell, instance) is (v: bool, g: Option<un::PCell::PointsTo<DummyNode>>) {
             match g {
                 None => v == true,
                 Some(points_to) => {
@@ -350,7 +412,7 @@ impl LinkedList {
         }
 
         let node = DummyNode { head: None::<Arc<LockedNode>>, map_token: Some(Tracked(map_token)) };
-        let (cell, Tracked(perm)) = pcell::PCell::new(node);
+        let (cell, Tracked(perm)) = un::PCell::new(node);
         let atomic = AtomicBool::new(Ghost((cell, Tracked(instance))), false, Tracked(Some(perm)));
 
         Self { 
@@ -360,7 +422,7 @@ impl LinkedList {
         }
     }
 
-    fn acquire_lock(&self) -> (points_to: Tracked<pcell::PointsTo<DummyNode>>)
+    fn acquire_lock(&self) -> (points_to: Tracked<un::PCell::PointsTo<DummyNode>>)
         requires 
             self.wf(),
         ensures 
@@ -394,7 +456,7 @@ impl LinkedList {
         }
     }
 
-    fn release_lock(&self, points_to: Tracked<pcell::PointsTo<DummyNode>>)
+    fn release_lock(&self, points_to: Tracked<un::PCell::PointsTo<DummyNode>>)
         requires
             self.wf(),
             points_to.id() == self.cell.id(),
@@ -429,15 +491,14 @@ pub struct Node {
 
 struct_with_invariants!{
     pub struct LockedNode {
-        pub atomic: AtomicBool<_, Option<pcell::PointsTo<Node>>, _>,
-        pub cell: pcell::PCell<Node>,
+        pub atomic: AtomicBool<_, Option<un::PCell::PointsTo<Node>>, _>,
+        pub cell: un::PCell::PCell<Node>,
         pub instance: Tracked<machine::Instance>,
         pub data_view: NodeData,
-
     }
 
     pub open spec fn wf(&self) -> bool {
-        invariant on atomic with (cell, instance, data_view) is (v: bool, g: Option<pcell::PointsTo<Node>>) {
+        invariant on atomic with (cell, instance, data_view) is (v: bool, g: Option<un::PCell::PointsTo<Node>>) {
             match g {
                 None => v == true,
                 Some(points_to) => {
@@ -482,12 +543,12 @@ impl LockedNode {
     {   
         let data_view = NodeData::Node(data);
         let node = Node { data, next_node, map_token: Some(map_token) };
-        let (cell, Tracked(perm)) = pcell::PCell::new(node);
+        let (cell, Tracked(perm)) = un::PCell::new(node);
         let atomic = AtomicBool::new(Ghost((cell, instance, data_view)), false, Tracked(Some(perm)));
         Self { atomic, cell, instance, data_view }
     }
 
-    fn acquire_lock(&self) -> (points_to: Tracked<pcell::PointsTo<Node>>)
+    fn acquire_lock(&self) -> (points_to: Tracked<un::PCell::PointsTo<Node>>)
         requires 
             self.wf(),
         ensures 
@@ -523,7 +584,7 @@ impl LockedNode {
         }
     }
 
-    fn release_lock(&self, points_to: Tracked<pcell::PointsTo<Node>>)
+    fn release_lock(&self, points_to: Tracked<un::PCell::PointsTo<Node>>)
         requires
             self.wf(),
             points_to.id() == self.cell.id(),
@@ -556,10 +617,6 @@ pub struct DataWitness {
     data: u32,
     witness: Tracked<machine::node_witnesses>
 }
-
-// A -> B
-// B -> C
-// C -> D
 
 impl LinkedList {
     fn insert(self: Arc<Self>, insert_data: u32) -> (data_witness: Option<DataWitness>)

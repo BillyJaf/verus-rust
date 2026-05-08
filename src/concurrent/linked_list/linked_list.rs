@@ -315,13 +315,39 @@ tokenized_state_machine!{
         }
 
         property!{
-            no_token_exists(first_node_data: u32) {
+            no_smaller_token_exists(first_node_data: u32) {
                 have nodes >= [NodeData::Dummy => Some(NodeData::Node(first_node_data))];
                 birds_eye let n = pre.nodes;
 
                 assert(
                     forall |data: u32| #![auto]
                         data < first_node_data ==>
+                            !n.dom().contains(NodeData::Node(data))
+                );
+            }
+        }
+
+        property!{
+            no_larger_token_exists(last_node_data: u32) {
+                have nodes >= [NodeData::Node(last_node_data) => None];
+                birds_eye let n = pre.nodes;
+
+                assert(
+                    forall |data: u32| #![auto]
+                        data > last_node_data ==>
+                            !n.dom().contains(NodeData::Node(data))
+                );
+            }
+        }
+
+        property!{
+            no_inbetween_token_exists(lower_node_data: u32, upper_node_data: u32) {
+                have nodes >= [NodeData::Node(lower_node_data) => Some(NodeData::Node(upper_node_data))];
+                birds_eye let n = pre.nodes;
+
+                assert(
+                    forall |data: u32| #![auto]
+                        (lower_node_data < data && data < upper_node_data) ==>
                             !n.dom().contains(NodeData::Node(data))
                 );
             }

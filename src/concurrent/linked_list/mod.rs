@@ -1,2 +1,2 @@
 #[verifier::verify]
-pub mod bad_example_test;
+pub mod linked_list;

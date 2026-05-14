@@ -1,3 +1,4 @@
+#![verifier::deprecated_postcondition_mut_ref_style(true)]
 use vstd::prelude::*;
 
 verus!{
@@ -6,7 +7,7 @@ verus!{
             vec1.len() == old(vec2).len()
         ensures
             vec2.len() == old(vec2).len(),
-            forall |i: int| 0 <= i < vec1.len() ==> vec1[i] == vec2[i],
+            forall |i: int| #![auto] 0 <= i < vec1.len() ==> vec1[i] == vec2[i],
             vec1@ == vec2@
     {       
         let mut i = 0;
@@ -14,7 +15,7 @@ verus!{
             invariant
                 vec1.len() == vec2.len(),
                 0 <= i <= vec1.len(),
-                forall |j: int| 0 <= j < i ==> vec1[j] == vec2[j],
+                forall |j: int| #![auto] 0 <= j < i ==> vec1[j] == vec2[j],
             decreases
                 vec1.len() - i
         {

@@ -73,16 +73,14 @@ fn main() {
     ) = machine::Instance::initialize();
 
     let tracked true_token;
+    // let tracked false_token;
     proof {
         true_token = instance.add_true(&mut init_b);
         instance.have_true(&true_token);
-        assert(
-            !(
-                exists |token: machine::bools|
-                    token.instance_id() == instance.id() &&
-                    token.element() == false
-            )
-        )
+        // instance.have_true_contradiction(&true_token);
+        
+        // instance.have_both_contradiction(&true_token, &false_token);
+
     }
 }
 }

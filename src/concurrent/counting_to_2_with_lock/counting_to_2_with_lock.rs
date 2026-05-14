@@ -84,7 +84,7 @@ tokenized_state_machine!(
 
 pub struct CounterWithPerm {
     pub val: u32,
-    pub ghost_token: Option<Tracked<machine::counter>>,
+    pub ghost_token: Tracked<machine::counter>,
 }
 
 struct_with_invariants!{
@@ -101,9 +101,8 @@ struct_with_invariants!{
                 Some(points_to) => {
                     v == false &&
                     points_to.id() == cell.id() &&
-                    points_to.value().ghost_token.is_some() &&
-                    points_to.value().ghost_token.unwrap()@.instance_id() == instance@.id() &&
-                    points_to.value().ghost_token.unwrap()@.value() == points_to.value().val as int
+                    points_to.value().ghost_token@.instance_id() == instance@.id() &&
+                    points_to.value().ghost_token@.value() == points_to.value().val as int
                 }
             }
         }
@@ -113,9 +112,8 @@ struct_with_invariants!{
 impl Global {
     fn new(cwp: CounterWithPerm, instance: Tracked<machine::Instance>) -> (global: Self)
         requires
-            cwp.ghost_token.is_some() &&
-            cwp.ghost_token.unwrap()@.instance_id() == instance@.id(),
-            cwp.ghost_token.unwrap()@.value() == cwp.val as int
+            cwp.ghost_token@.instance_id() == instance@.id(),
+            cwp.ghost_token@.value() == cwp.val as int
         ensures 
             global.wf(),
             global.instance == instance,
@@ -130,9 +128,8 @@ impl Global {
             self.wf(),
         ensures 
             points_to@.id() == self.cell.id(), 
-            points_to@.value().ghost_token.is_some(),
-            points_to@.value().ghost_token.unwrap()@.instance_id() == self.instance@.id(),
-            points_to@.value().ghost_token.unwrap()@.value() == points_to@.value().val as int,
+            points_to@.value().ghost_token@.instance_id() == self.instance@.id(),
+            points_to@.value().ghost_token@.value() == points_to@.value().val as int,
             self.wf(),
     {
         loop
@@ -155,9 +152,8 @@ impl Global {
         requires
             self.wf(),
             points_to@.id() == self.cell.id(), 
-            points_to@.value().ghost_token.is_some(),
-            points_to@.value().ghost_token.unwrap()@.instance_id() == self.instance@.id(),
-            points_to@.value().ghost_token.unwrap()@.value() == points_to@.value().val as int,
+            points_to@.value().ghost_token@.instance_id() == self.instance@.id(),
+            points_to@.value().ghost_token@.value() == points_to@.value().val as int,
         ensures
             self.wf()
     {
@@ -181,7 +177,7 @@ fn main() {
 
     let cwp = CounterWithPerm {
         val: 0,
-        ghost_token: Some(Tracked(counter_token)),
+        ghost_token: Tracked(counter_token),
     };
 
     let global = Global::new(cwp, Tracked(instance.clone()));
@@ -202,26 +198,16 @@ fn main() {
 
                 let mut perm = global_arc_thread1.acquire_lock();
 
-                let empty_cwp = CounterWithPerm { 
-                    val: 0,
-                    ghost_token: None
-                };
-
-                let mut cwp = global_arc_thread1.cell.replace(Tracked(perm.borrow_mut()), empty_cwp); 
-                let val = cwp.val;
-                let mut ghost_token = cwp.ghost_token.unwrap();
+                let mut cwp = global_arc_thread1.cell.borrow_mut(Tracked(perm.borrow_mut())); 
                 
                 proof {
-                    global_arc_thread1.instance.borrow().increment_will_not_overflow_u32(ghost_token.borrow_mut());
-                    global_arc_thread1.instance.borrow().tr_inc_a(ghost_token.borrow_mut(), &mut token);
+                    global_arc_thread1.instance.borrow().increment_will_not_overflow_u32(cwp.ghost_token.borrow_mut());
+                    global_arc_thread1.instance.borrow().tr_inc_a(cwp.ghost_token.borrow_mut(), &mut token);
                 }
 
-                global_arc_thread1.cell.replace(Tracked(perm.borrow_mut()), CounterWithPerm {
-                    val: val + 1,
-                    ghost_token: Some(ghost_token),
-                });
+                cwp.val += 1;
 
-                global_arc_thread1.release_lock(perm);
+                // global_arc_thread1.release_lock(perm);
                 Tracked(token)
             }),
     );
@@ -239,26 +225,16 @@ fn main() {
 
                 let mut perm = global_arc_thread2.acquire_lock();
 
-                let empty_cwp = CounterWithPerm { 
-                    val: 0,
-                    ghost_token: None
-                };
-
-                let mut cwp = global_arc_thread2.cell.replace(Tracked(perm.borrow_mut()), empty_cwp); 
-                let val = cwp.val;
-                let mut ghost_token = cwp.ghost_token.unwrap();
+                let mut cwp = global_arc_thread2.cell.borrow_mut(Tracked(perm.borrow_mut())); 
                 
                 proof {
-                    global_arc_thread2.instance.borrow().increment_will_not_overflow_u32(ghost_token.borrow_mut());
-                    global_arc_thread2.instance.borrow().tr_inc_b(ghost_token.borrow_mut(), &mut token);
+                    global_arc_thread2.instance.borrow().increment_will_not_overflow_u32(cwp.ghost_token.borrow_mut());
+                    global_arc_thread2.instance.borrow().tr_inc_b(cwp.ghost_token.borrow_mut(), &mut token);
                 }
 
-                global_arc_thread2.cell.replace(Tracked(perm.borrow_mut()), CounterWithPerm {
-                    val: val + 1,
-                    ghost_token: Some(ghost_token),
-                });
+                cwp.val += 1;
 
-                global_arc_thread2.release_lock(perm);
+                // global_arc_thread2.release_lock(perm);
                 Tracked(token)
             }),
     );
@@ -289,28 +265,14 @@ fn main() {
 
     // Join threads, load the atomic again
     let mut perm = global_arc.acquire_lock();
-    let empty_cwp = CounterWithPerm { 
-        val: 0,
-        ghost_token: None
-    };
 
-    let mut cwp = global_arc.cell.replace(Tracked(perm.borrow_mut()), empty_cwp); 
-
-    let val = cwp.val;
-    let ghost_token = cwp.ghost_token.unwrap();
+    let mut cwp = global_arc.cell.borrow_mut(Tracked(perm.borrow_mut())); 
 
     proof {
-        global_arc.instance.borrow().finalize(ghost_token.borrow(), &inc_a_token, &inc_b_token);
+        global_arc.instance.borrow().finalize(cwp.ghost_token.borrow(), &inc_a_token, &inc_b_token);
     }
 
-    global_arc.cell.replace(Tracked(perm.borrow_mut()), CounterWithPerm {
-        val: val,
-        ghost_token: Some(ghost_token),
-    });
-
+    assert(cwp.val == 2);
     global_arc.release_lock(perm);
-
-
-    assert(val == 2);
 }
 }

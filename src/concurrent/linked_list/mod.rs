@@ -1,2 +1,2 @@
 #[verifier::verify]
-pub mod rewrite;
+pub mod state_machine;

@@ -224,47 +224,24 @@ tokenized_state_machine!{
         }
 
         transition!{
-            insert_at_tail(current_tail: NodeData, new_tail: NodeData)
+            insert(lower_car: NodeData, insert_car: NodeData, upper_car: Option<NodeData>)
             {   
-                require(pre.initialized);
-                require(current_tail < new_tail);
-                remove data_map -= [current_tail => None];
-                add data_map += [current_tail => Some(new_tail)];
-                add data_map += [new_tail => None];
-            }
-        }
-
-        transition!{
-            insert_inbetween(lower_car: NodeData, insert_car: NodeData, upper_car: NodeData)
-            {   
-                require(pre.initialized);
                 require(lower_car < insert_car);
-                require(insert_car < upper_car);
-                remove data_map -= [lower_car => Some(upper_car)];
+                require(upper_car.is_some() ==> insert_car < upper_car.unwrap());
+                remove data_map -= [lower_car => upper_car];
                 add data_map += [lower_car => Some(insert_car)];
-                add data_map += [insert_car => Some(upper_car)];
+                add data_map += [insert_car => upper_car];
             }
         }
 
         transition!{
-            delete_at_tail(lower_car: NodeData, delete_car: NodeData)
+            delete(lower_car: NodeData, delete_car: NodeData, upper_car: Option<NodeData>)
             {   
-                require(pre.initialized);
-                require(delete_car != NodeData::Nil);
+                require(lower_car < delete_car);
+                require(upper_car.is_some() ==> delete_car < upper_car.unwrap());
                 remove data_map -= [lower_car => Some(delete_car)];
-                remove data_map -= [delete_car => None];
-                add data_map += [lower_car => None];
-            }
-        }
-
-        transition!{
-            delete_inbetween(lower_car: NodeData, delete_car: NodeData, upper_car: NodeData)
-            {   
-                require(pre.initialized);
-                require(delete_car != NodeData::Nil);
-                remove data_map -= [lower_car => Some(delete_car)];
-                remove data_map -= [delete_car => Some(upper_car)];
-                add data_map += [lower_car => Some(upper_car)];
+                remove data_map -= [delete_car => upper_car];
+                add data_map += [lower_car => upper_car];
             }
         }
 
@@ -277,121 +254,225 @@ tokenized_state_machine!{
         fn create_nil_inductive(pre: Self, post: Self) { 
         }
 
-        #[inductive(insert_at_tail)]
-        fn insert_at_tail_inductive(pre: Self, post: Self, current_tail: NodeData, new_tail: NodeData) {            
-            assert 
-                forall |i: NodeData|
-                    #[trigger] (new_tail < i)
-                implies
-                    !pre.data_map.dom().contains(i)
-            by {
-                assert(current_tail < i);
-
-                assert(
-                    current_tail < i
-                    ==> !pre.data_map.dom().contains(i)
-                );
-
-                assert(!pre.data_map.dom().contains(i));
-            }
-
-            assert
-                forall |i: NodeData| #![auto] 
-                    pre.data_map.dom().contains(i) 
-                implies 
-                    #[trigger] (i < new_tail)
-            by {
-                assert(i <= current_tail);
-                assert(current_tail < new_tail);
-            };
-
-            assert
-                forall |i: NodeData| 
-                    post.data_map.dom().contains(i)
-                implies
-                    #[trigger] (i <= new_tail)
-            by {
-                assert(pre.data_map.dom().contains(i) || i == new_tail);
-                assert(i < new_tail || i == new_tail);
-            }
-        }
-
-        #[inductive(insert_inbetween)]
-        fn insert_inbetween_inductive(pre: Self, post: Self, lower_car: NodeData, insert_car: NodeData, upper_car: NodeData) {             
-            assert
-                forall |i: NodeData|
-                    (
-                        #[trigger] post.data_map.dom().contains(i) && 
-                        post.data_map[i] == None::<NodeData>
-                    ) 
-                implies 
-                    (
-                        forall |j: NodeData| #![auto] 
-                            i < j ==> !post.data_map.dom().contains(j)
-                    ) && (
-                        forall |j: NodeData| #![auto] 
-                            post.data_map.dom().contains(j) ==> j <= i
-                    )
-            by {
-                assert(insert_car < upper_car);
-                assert(upper_car <= i);
-            };    
-
-            assert
-                forall |i: NodeData| #![auto] 
-                    (
-                        #[trigger] post.data_map.dom().contains(i) && 
-                        post.data_map[i] != None::<NodeData>
-                    )
-                implies
-                    forall |j: NodeData| #![auto] 
+        #[inductive(insert)]
+        fn insert_inductive(pre: Self, post: Self, lower_car: NodeData, insert_car: NodeData, upper_car: Option<NodeData>) {  
+            if (upper_car.is_some()) { 
+                let upper_car = upper_car.unwrap();      
+                assert
+                    forall |i: NodeData|
                         (
-                            i < j && 
-                            j < post.data_map[i].unwrap()
-                        ) ==> (
-                            !post.data_map.dom().contains(j)
+                            #[trigger] post.data_map.dom().contains(i) && 
+                            post.data_map[i] == None::<NodeData>
+                        ) 
+                    implies 
+                        (
+                            forall |j: NodeData| #![auto] 
+                                i < j ==> !post.data_map.dom().contains(j)
+                        ) && (
+                            forall |j: NodeData| #![auto] 
+                                post.data_map.dom().contains(j) ==> j <= i
                         )
-            by {
-                if (i == lower_car) {
-                    assert(post.data_map[i] == Some(insert_car));
-                } else if (i == insert_car) {
-                    assert(post.data_map[i] == Some(upper_car));
-                    // Removing this fails verification - I believe it is because of triggers
-                    assert(
+                by {
+                    assert(insert_car < upper_car);
+                    assert(upper_car <= i);
+                };    
+
+                assert
+                    forall |i: NodeData| #![auto] 
+                        (
+                            #[trigger] post.data_map.dom().contains(i) && 
+                            post.data_map[i] != None::<NodeData>
+                        )
+                    implies
                         forall |j: NodeData| #![auto] 
                             (
-                                lower_car < j && 
-                                j < upper_car
+                                i < j && 
+                                j < post.data_map[i].unwrap()
                             ) ==> (
-                                !pre.data_map.dom().contains(j)
+                                !post.data_map.dom().contains(j)
                             )
-                        );
-                } else if (i < lower_car) {
-                    assert(pre.data_map[i].unwrap() < insert_car);
-                } else {
+                by {
+                    if (i == lower_car) {
+                        assert(post.data_map[i] == Some(insert_car));
+                    } else if (i == insert_car) {
+                        assert(post.data_map[i] == Some(upper_car));
+                        // Removing this fails verification - I believe it is because of triggers
+                        assert(
+                            forall |j: NodeData| #![auto] 
+                                (
+                                    lower_car < j && 
+                                    j < upper_car
+                                ) ==> (
+                                    !pre.data_map.dom().contains(j)
+                                )
+                            );
+                    } else if (i < lower_car) {
+                        assert(pre.data_map[i].unwrap() < insert_car);
+                    } else {
+                        assert(lower_car < i);
+                    }
+                }
+            } else {
+                assert 
+                    forall |i: NodeData|
+                        #[trigger] (insert_car < i)
+                    implies
+                        !pre.data_map.dom().contains(i)
+                by {
                     assert(lower_car < i);
+                }
+
+                assert
+                    forall |i: NodeData| 
+                        post.data_map.dom().contains(i)
+                    implies
+                        #[trigger] (i <= insert_car)
+                by {
+                    assert
+                        forall |i: NodeData| #![auto] 
+                            pre.data_map.dom().contains(i) 
+                        implies 
+                            #[trigger] (i < insert_car)
+                    by {
+                        assert(i <= lower_car);
+                        assert(lower_car < insert_car);
+                    };
+
+                    assert(pre.data_map.dom().contains(i) || i == insert_car);
+                    assert(i < insert_car || i == insert_car);
                 }
             }
         }
 
-        #[inductive(delete_at_tail)]
-        fn delete_at_tail_inductive(pre: Self, post: Self, lower_car: NodeData, delete_car: NodeData) {
-            assert(post.data_map.dom().contains(NodeData::Nil));
+        #[inductive(delete)]
+        fn delete_inductive(pre: Self, post: Self, lower_car: NodeData, delete_car: NodeData, upper_car: Option<NodeData>) {
+            if (upper_car.is_some()) {
+                let upper_car = upper_car.unwrap();
+                if (lower_car == NodeData::Nil) {
+                    assert
+                        forall |i: NodeData|
+                            #[trigger] post.data_map.dom().contains(i)
+                        implies
+                            (
+                                i >= post.data_map[NodeData::Nil].unwrap() ||
+                                i == NodeData::Nil
+                            )
+                    by {
+                        if (i == NodeData::Nil) {
+                        } else {
+                            assert(lower_car < i);
 
-            if (lower_car == NodeData::Nil) {
+                            assert(
+                                forall |j: NodeData| #![auto]
+                                    (
+                                        lower_car < j &&
+                                        j < delete_car
+                                    ) ==> (
+                                        !post.data_map.dom().contains(j)
+                                    )
+                            );
+
+                            assert(
+                                forall |j: NodeData| #![auto]
+                                    (
+                                        delete_car < j &&
+                                        j < upper_car
+                                    ) ==> (
+                                        !post.data_map.dom().contains(j)
+                                    )
+                            );
+
+                            assert(
+                                forall |j: NodeData| #![auto]
+                                    (
+                                        lower_car < j &&
+                                        j < upper_car
+                                    ) ==> (
+                                        !post.data_map.dom().contains(j)
+                                    )
+                            );
+                        }
+                    }
+                }
+    
+                assert
+                    forall |i: NodeData| #![auto] 
+                        (
+                            post.data_map.dom().contains(i) && 
+                            #[trigger] post.data_map[i] != None::<NodeData>
+                        ) 
+                    implies
+                        forall |j: NodeData| #![auto] 
+                            (
+                                i < j && 
+                                j < post.data_map[i].unwrap()
+                            ) ==> (
+                                !post.data_map.dom().contains(j)
+                            )
+                by {
+                    assert(
+                        forall |j: NodeData| #![auto]
+                            (
+                                lower_car < j &&
+                                j < delete_car
+                            ) ==> (
+                                !pre.data_map.dom().contains(j)
+                            )
+                    );
+                        
+                    assert(
+                        forall |j: NodeData| #![auto]
+                            (
+                                delete_car < j &&
+                                j < upper_car
+                            ) ==> (
+                                !pre.data_map.dom().contains(j)
+                            )
+                    );
+                }
+            } else {
+                assert(post.data_map.dom().contains(NodeData::Nil));
+
+                if (lower_car == NodeData::Nil) {
+                    assert forall |i: NodeData|
+                        #[trigger] pre.data_map.dom().contains(i)
+                    implies
+                        i == lower_car || i == delete_car
+                    by {
+                        if i == lower_car {
+                        } else {
+                            assert(
+                                forall |j: NodeData| #![auto] 
+                                    pre.data_map.dom().contains(j) ==> j <= delete_car
+                            );
+
+                            assert(i <= delete_car);
+
+                            assert(
+                                forall |j: NodeData| #![auto]
+                                    (
+                                        lower_car < j &&
+                                        j < delete_car
+                                    ) ==> (
+                                        !pre.data_map.dom().contains(j)
+                                    )
+                            );
+
+                            assert(i == delete_car);
+                        }
+                    }
+                }
+
                 assert forall |i: NodeData|
                     #[trigger] pre.data_map.dom().contains(i)
                 implies
-                    i == lower_car || i == delete_car
+                    (i <= lower_car) || i == delete_car
                 by {
-                    if i == lower_car {
-                    } else {
-                        assert(
-                            forall |j: NodeData| #![auto] 
-                                pre.data_map.dom().contains(j) ==> j <= delete_car
-                        );
+                    assert(i <= delete_car);
 
-                        assert(i <= delete_car);
+                    if i == delete_car {
+                    } else {
+                        assert(i < delete_car);
 
                         assert(
                             forall |j: NodeData| #![auto]
@@ -402,120 +483,8 @@ tokenized_state_machine!{
                                     !pre.data_map.dom().contains(j)
                                 )
                         );
-
-                        assert(i == delete_car);
                     }
                 }
-            }
-
-            assert forall |i: NodeData|
-                #[trigger] pre.data_map.dom().contains(i)
-            implies
-                (i <= lower_car) || i == delete_car
-            by {
-                assert(i <= delete_car);
-
-                if i == delete_car {
-                } else {
-                    assert(i < delete_car);
-
-                    assert(
-                        forall |j: NodeData| #![auto]
-                            (
-                                lower_car < j &&
-                                j < delete_car
-                            ) ==> (
-                                !pre.data_map.dom().contains(j)
-                            )
-                    );
-                }
-            }
-        }
-
-        #[inductive(delete_inbetween)]
-        fn delete_inbetween_inductive(pre: Self, post: Self, lower_car: NodeData, delete_car: NodeData, upper_car: NodeData) {
-
-            if (lower_car == NodeData::Nil) {
-                assert
-                    forall |i: NodeData|
-                        #[trigger] post.data_map.dom().contains(i)
-                    implies
-                        (
-                            i >= post.data_map[NodeData::Nil].unwrap() ||
-                            i == NodeData::Nil
-                        )
-                by {
-                    if (i == NodeData::Nil) {
-                    } else {
-                        assert(lower_car < i);
-
-                        assert(
-                            forall |j: NodeData| #![auto]
-                                (
-                                    lower_car < j &&
-                                    j < delete_car
-                                ) ==> (
-                                    !post.data_map.dom().contains(j)
-                                )
-                        );
-
-                        assert(
-                            forall |j: NodeData| #![auto]
-                                (
-                                    delete_car < j &&
-                                    j < upper_car
-                                ) ==> (
-                                    !post.data_map.dom().contains(j)
-                                )
-                        );
-
-                        assert(
-                            forall |j: NodeData| #![auto]
-                                (
-                                    lower_car < j &&
-                                    j < upper_car
-                                ) ==> (
-                                    !post.data_map.dom().contains(j)
-                                )
-                        );
-                    }
-                }
-            }
- 
-            assert
-                forall |i: NodeData| #![auto] 
-                    (
-                        post.data_map.dom().contains(i) && 
-                        #[trigger] post.data_map[i] != None::<NodeData>
-                    ) 
-                implies
-                    forall |j: NodeData| #![auto] 
-                        (
-                            i < j && 
-                            j < post.data_map[i].unwrap()
-                        ) ==> (
-                            !post.data_map.dom().contains(j)
-                        )
-            by {
-                assert(
-                    forall |j: NodeData| #![auto]
-                        (
-                            lower_car < j &&
-                            j < delete_car
-                        ) ==> (
-                            !pre.data_map.dom().contains(j)
-                        )
-                );
-                    
-                assert(
-                    forall |j: NodeData| #![auto]
-                        (
-                            delete_car < j &&
-                            j < upper_car
-                        ) ==> (
-                            !pre.data_map.dom().contains(j)
-                        )
-                );
             }
         }
     }

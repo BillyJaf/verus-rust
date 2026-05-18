@@ -3,14 +3,12 @@ use verus_state_machines_macros::tokenized_state_machine;
 use verus_builtin::*;
 use verus_builtin_macros::*;
 use std::sync::Arc;
-use std::cmp::Ordering;
 use vstd::{
     atomic_ghost::*,
     modes::*,
     prelude::*,
     thread::*,
     pervasive::*, 
-    prelude::*, 
     cell::pcell_maybe_uninit::{
         PCell,
         PointsTo
@@ -572,7 +570,6 @@ impl LockedNil {
         let node = Nil { cdr: None::<Arc<LockedCons>>, map_token: Tracked(map_token) };
         let (cell, Tracked(perm)) = PCell::new(node);
         let atomic = AtomicBool::new(Ghost((cell, Tracked(instance))), false, Tracked(Some(perm)));
-
         Self { 
             atomic, 
             cell, 
@@ -785,6 +782,7 @@ impl LockedNil {
                 );
             }
             self.release_lock(nil_perm);
+            first_locked_cons.release_lock(first_cons_perm);
             return;
         }
 

@@ -227,7 +227,7 @@ impl LockedNil {
 
             // Any insert from here onwards will not involve nil - 
             // we may delegate the insert to a chain of LockedCons
-            // first_locked_cons.insert(first_cons_perm, insert_car_raw);
+            first_locked_cons.insert(first_cons_perm, insert_car);
         }
     }
 
@@ -241,14 +241,20 @@ impl LockedNil {
             nil_perm.value().cdr.unwrap().wf(),
             nil_perm.value().cdr.unwrap().view_car == cons_perm.value().car,
             cons_perm.id() == nil_perm.value().cdr.unwrap().cell.id(),
-            cons_perm.value().cdr.is_some() ==> 
-                cons_perm.value().cdr.unwrap().wf(),
+            cons_perm.value().cdr.is_some() ==> (
+                cons_perm.value().cdr.unwrap().wf() &&
+                cons_perm.value().cdr.unwrap().view_car > delete_car
+            ),
             delete_car == cons_perm.value().car,
         ensures
             self.wf(),
             updated_nil_perm.is_init(),
             updated_nil_perm.id() == self.cell.id(),
-            updated_nil_perm.value().cdr == cons_perm.value().cdr
+            updated_nil_perm.value().cdr == cons_perm.value().cdr,
+            updated_nil_perm.value().cdr.is_some() ==> ( 
+                updated_nil_perm.value().cdr.unwrap().wf() &&
+                updated_nil_perm.value().cdr.unwrap().view_car > delete_car
+            ),
     {
         let mut nil = self.cell.take(Tracked(nil_perm.borrow_mut()));
         let first_cons = nil.cdr.as_ref().unwrap().cell.take(Tracked(cons_perm.borrow_mut()));
@@ -593,10 +599,10 @@ impl LockedCons {
                 updated_first_cons_perm.value().cdr.unwrap().view_car > delete_car
             ),
     {
-        let mut nil = self.cell.take(Tracked(first_cons_perm.borrow_mut()));
-        let first_cons = nil.cdr.as_ref().unwrap().cell.take(Tracked(delete_cons_perm.borrow_mut()));
-        nil.cdr = first_cons.cdr;
-        self.cell.put(Tracked(first_cons_perm.borrow_mut()), nil);
+        let mut first_cons = self.cell.take(Tracked(first_cons_perm.borrow_mut()));
+        let delete_cons = first_cons.cdr.as_ref().unwrap().cell.take(Tracked(delete_cons_perm.borrow_mut()));
+        first_cons.cdr = delete_cons.cdr;
+        self.cell.put(Tracked(first_cons_perm.borrow_mut()), first_cons);
         return first_cons_perm
     }
 

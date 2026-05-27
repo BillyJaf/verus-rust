@@ -62,6 +62,14 @@ tokenized_state_machine!{
                 assert(!s.contains(false));
             }
         }
+
+        // property!{
+        //     have_false() {
+        //         birds_eye let s = pre.bools;
+
+        //         assert(s.contains(false));
+        //     }
+        // }
     }
 }
 
@@ -76,11 +84,19 @@ fn main() {
     // let tracked false_token;
     proof {
         true_token = instance.add_true(&mut init_b);
+        assert(true_token.element() == true);
+        assert(true_token.instance_id() == instance.id());
         instance.have_true(&true_token);
         // instance.have_true_contradiction(&true_token);
         
         // instance.have_both_contradiction(&true_token, &false_token);
-
+        // assert(
+        //     !(
+        //         exists |token: machine::bools|
+        //             token.instance_id() == instance.id() &&
+        //             token.element() == false
+        //     )
+        // );
     }
 }
 }

@@ -19,6 +19,7 @@ use vstd::{
 verus! {
 
 pub enum Operation {
+    CreateNil,
     Insert(NodeData),
     InsertFail(NodeData),
     Delete(NodeData),
@@ -90,6 +91,38 @@ impl NodeData {
     }
 }
 
+pub open spec fn count_inserts_up_to(
+    operation_index: nat,
+    insert_value: NodeData,
+    history: Map<nat, Operation>,
+) -> nat
+decreases operation_index
+{
+    if operation_index == 0 {
+        0nat
+    } else {
+        let possible_insert = if history[operation_index] == Operation::Insert(insert_value) { 1nat } else { 0nat };
+
+        possible_insert + count_inserts_up_to((operation_index - 1) as nat, insert_value, history)
+    }
+}
+
+pub open spec fn count_deletes_up_to(
+    operation_index: nat,
+    insert_value: NodeData,
+    history: Map<nat, Operation>,
+) -> nat
+decreases operation_index
+{
+    if operation_index == 0 {
+        0nat
+    } else {
+        let possible_insert = if history[operation_index] == Operation::Delete(insert_value) { 1nat } else { 0nat };
+
+        possible_insert + count_deletes_up_to((operation_index - 1) as nat, insert_value, history)
+    }
+}
+
 tokenized_state_machine!{
     machine {
         fields {
@@ -104,7 +137,33 @@ tokenized_state_machine!{
         }
 
         #[invariant]
-        pub fn operation_inv(&self) -> bool {
+        pub fn uninitialised_operation_inv(&self) -> bool {
+            (self.operation_history.is_empty() <==> !self.initialized) &&
+            (self.initialized ==> (self.operation_history[0] == Operation::CreateNil)) &&
+            (forall |i: nat, j: nat| #![auto]
+                (
+                    self.operation_history.dom().contains(i) && 
+                    self.operation_history[i] == Operation::CreateNil && 
+                    self.operation_history.dom().contains(j) &&
+                    self.operation_history[j] == Operation::CreateNil 
+                ) ==> i == j
+            )
+        }
+
+        #[invariant]
+        pub fn more_inserts_than_deletes_inv(&self) -> bool {
+            forall |i: nat, data: NodeData| #![auto] 
+                (
+                    i < self.operation_history.dom().len() &&
+                    self.operation_history[i] == Operation::Insert(data)
+                ) ==> (
+                    count_inserts_up_to(i, data, self.operation_history) == count_deletes_up_to(i, data, self.operation_history) ||
+                    count_inserts_up_to(i, data, self.operation_history) == count_deletes_up_to(i, data, self.operation_history) + 1
+                )
+        }
+
+        #[invariant]
+        pub fn main_operation_inv(&self) -> bool {
             self.operation_history.dom().finite() &&
             (forall |i: nat| i < self.operation_history.dom().len() <==> self.operation_history.dom().contains(i))
         }
@@ -236,6 +295,8 @@ tokenized_state_machine!{
                 require(!pre.initialized);
                 update initialized = true;
                 add data_map += [NodeData::Nil => None];
+
+                add operation_history += [0 => Operation::CreateNil]; 
             }
         }
 
@@ -586,9 +647,13 @@ impl LockedNil {
             Tracked(operation_history)
         ) = machine::Instance::initialize();
 
+        let tracked tuple;
         let tracked map_token;
+        let tracked witness_token;
         proof {
-            map_token = instance.create_nil(&mut initialized)
+            tuple = instance.create_nil(&mut initialized);
+            map_token = tuple.0.get();
+            witness_token = tuple.1.get();
         };
 
         let node = Nil { cdr: None::<Arc<LockedCons>>, map_token: Tracked(map_token) };

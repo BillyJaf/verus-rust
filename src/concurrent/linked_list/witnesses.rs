@@ -123,6 +123,29 @@ decreases operation_index
     }
 }
 
+pub proof fn stable_counts(
+    data: NodeData,
+    up_to_index: nat,
+    pre_history: Map<nat, Operation>,
+    post_history: Map<nat, Operation>,
+)
+requires
+    up_to_index < pre_history.dom().len(),
+    pre_history =~= post_history.remove(pre_history.len()),
+ensures
+    count_inserts_up_to(up_to_index, data, pre_history) == count_inserts_up_to(up_to_index, data, post_history),
+    count_deletes_up_to(up_to_index, data, pre_history) == count_deletes_up_to(up_to_index, data, post_history)
+decreases
+    up_to_index
+{
+    if up_to_index == 0 {}
+    else {
+        stable_counts(data, (up_to_index - 1) as nat, pre_history, post_history);
+    }
+}
+    
+
+
 tokenized_state_machine!{
     machine {
         fields {
@@ -158,6 +181,32 @@ tokenized_state_machine!{
                     self.operation_history[i] == Operation::Insert(data)
                 ) ==> (
                     count_inserts_up_to(i, data, self.operation_history) == count_deletes_up_to(i, data, self.operation_history) ||
+                    count_inserts_up_to(i, data, self.operation_history) == count_deletes_up_to(i, data, self.operation_history) + 1
+                )
+        }
+
+        #[invariant]
+        pub fn insert_count_equals_delete_count_implies_not_in_list_inv(&self) -> bool {
+            forall |data: NodeData| #![auto]
+                !self.data_map.dom().contains(data) ==> (
+                forall |i: nat| #![auto] 
+                    (
+                        i < self.operation_history.dom().len() &&
+                        self.operation_history[i] == Operation::Insert(data)
+                    ) ==> 
+                    count_inserts_up_to(i, data, self.operation_history) == count_deletes_up_to(i, data, self.operation_history)
+                )
+        }
+
+        #[invariant]
+        pub fn insert_count_larger_than_delete_count_implies_in_list_inv(&self) -> bool {
+            forall |data: NodeData| #![auto]
+                self.data_map.dom().contains(data) ==> (
+                forall |i: nat| #![auto] 
+                    (
+                        i < self.operation_history.dom().len() &&
+                        self.operation_history[i] == Operation::Insert(data)
+                    ) ==> 
                     count_inserts_up_to(i, data, self.operation_history) == count_deletes_up_to(i, data, self.operation_history) + 1
                 )
         }
@@ -425,6 +474,135 @@ tokenized_state_machine!{
                     assert(i < insert_car || i == insert_car);
                 }
             }
+
+            assert(
+                forall |data: NodeData| #![auto]
+                    !pre.data_map.dom().contains(data) ==> (
+                    forall |i: nat| #![auto] 
+                        (
+                            i < pre.operation_history.dom().len() &&
+                            pre.operation_history[i] == Operation::Insert(data)
+                        ) ==> 
+                        count_inserts_up_to(i, data, pre.operation_history) == count_deletes_up_to(i, data, pre.operation_history)
+                    )
+            );
+
+            assert(!pre.data_map.dom().contains(insert_car));
+
+            assert(
+                forall |i: nat| #![auto] 
+                    (
+                        i < pre.operation_history.dom().len() &&
+                        pre.operation_history[i] == Operation::Insert(insert_car)
+                    ) ==> 
+                    count_inserts_up_to(i, insert_car, pre.operation_history) == count_deletes_up_to(i, insert_car, pre.operation_history)
+            );
+
+            assert(pre.operation_history.insert(pre.operation_history.len(), Operation::Insert(insert_car)) =~= post.operation_history);
+
+            assert(post.data_map.dom().contains(insert_car));
+
+            assert(
+                forall |data: NodeData| #![auto]
+                    !post.data_map.dom().contains(data) ==> !pre.data_map.dom().contains(data)
+            );
+
+            assert(
+                forall |data: NodeData| #![auto]
+                    !post.data_map.dom().contains(data) ==> (
+                        forall |i: nat| #![auto] 
+                            (
+                                i < pre.operation_history.dom().len() &&
+                                pre.operation_history[i] == Operation::Insert(insert_car)
+                            ) ==> 
+                            count_inserts_up_to(i, insert_car, pre.operation_history) == count_deletes_up_to(i, insert_car, pre.operation_history)
+                    )
+            );
+
+
+            assert
+                forall |data: NodeData| #![auto]
+                    !post.data_map.dom().contains(data) 
+            implies 
+                (
+                    forall |i: nat| #![auto]
+                        i < pre.operation_history.dom().len() ==>
+                            count_inserts_up_to(i, data, pre.operation_history) == count_inserts_up_to(i, data, post.operation_history) &&
+                            count_deletes_up_to(i, data, pre.operation_history) == count_deletes_up_to(i, data, post.operation_history)
+                )
+            by {
+                assert forall |i: nat|
+                    i < pre.operation_history.dom().len()
+                implies
+                    count_inserts_up_to(i, data, pre.operation_history) == count_inserts_up_to(i, data, post.operation_history) &&
+                    count_deletes_up_to(i, data, pre.operation_history) == count_deletes_up_to(i, data, post.operation_history)
+                by {
+                    stable_counts(data, i, pre.operation_history, post.operation_history);
+                };
+            };
+
+            assert(
+                forall |data: NodeData| #![auto]
+                    !post.data_map.dom().contains(data) ==> (
+                    forall |i: nat| #![auto] 
+                        (
+                            i < post.operation_history.dom().len() &&
+                            post.operation_history[i] == Operation::Insert(data)
+                        ) ==> 
+                        ((count_inserts_up_to(i, data, post.operation_history) == count_inserts_up_to(i, data, pre.operation_history) && count_deletes_up_to(i, data, post.operation_history) == count_deletes_up_to(i, data, pre.operation_history)) || i == pre.operation_history.dom().len())
+                    )
+                );
+
+            assert(
+                forall |data: NodeData| #![auto]
+                    !post.data_map.dom().contains(data) ==> (
+                    forall |i: nat| #![auto] 
+                        (
+                            i < post.operation_history.dom().len() &&
+                            post.operation_history[i] == Operation::Insert(data)
+                        ) ==> 
+                        (count_inserts_up_to(i, data, pre.operation_history) == count_deletes_up_to(i, data, pre.operation_history) || i == pre.operation_history.dom().len())
+                    )
+                );
+
+                assert(
+                forall |data: NodeData| #![auto]
+                    !post.data_map.dom().contains(data) ==> (
+                    forall |i: nat| #![auto] 
+                        (
+                            i < post.operation_history.dom().len() &&
+                            post.operation_history[i] == Operation::Insert(data)
+                        ) ==> 
+                        (count_inserts_up_to(i, data, post.operation_history) == count_deletes_up_to(i, data, post.operation_history) || i == pre.operation_history.dom().len())
+                    )
+                );
+
+
+
+            // assert(
+            //     forall |data: NodeData| #![auto]
+            //         !post.data_map.dom().contains(data) ==> (
+            //         forall |i: nat| #![auto] 
+            //             (
+            //                 i < post.operation_history.dom().len() &&
+            //                 post.operation_history[i] == Operation::Insert(data)
+            //             ) ==> 
+            //             count_inserts_up_to(i, data, post.operation_history) == count_deletes_up_to(i, data, post.operation_history)
+            //         )
+            //     );
+
+
+            // assert(
+            //     forall |i: nat, data: NodeData| #![auto] 
+            //         (
+            //             i < pre.operation_history.dom().len() &&
+            //             pre.operation_history[i] == Operation::Insert(data)
+            //         ) ==> (
+            //             count_inserts_up_to(i, data, pre.operation_history) == count_deletes_up_to(i, data, pre.operation_history) ||
+            //             count_inserts_up_to(i, data, pre.operation_history) == count_deletes_up_to(i, data, pre.operation_history) + 1
+            //         )
+            //     );
+            // assert(pre.operation_history.insert(pre.operation_history.len(), Operation::Insert(insert_car)) =~= post.operation_history);
         }
 
         #[inductive(delete)]

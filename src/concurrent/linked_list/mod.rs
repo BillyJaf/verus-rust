@@ -1,2 +1,2 @@
 #[verifier::verify]
-pub mod no_state_machine;
+pub mod witnesses;

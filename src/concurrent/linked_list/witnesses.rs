@@ -484,6 +484,16 @@ tokenized_state_machine!{
                     assert(i < insert_car || i == insert_car);
                 }
             }
+
+            assert
+                forall |i: nat, data: NodeData| #![auto] 
+                    i < pre.operation_history.dom().len()
+                implies
+                    count_inserts_up_to(i, data, pre.operation_history) == count_inserts_up_to(i, data, post.operation_history) &&
+                    count_deletes_up_to(i, data, pre.operation_history) == count_deletes_up_to(i, data, post.operation_history)
+            by {
+                stable_counts(data, i, pre.operation_history, post.operation_history);
+            };
         }
 
         #[inductive(delete)]
@@ -628,6 +638,16 @@ tokenized_state_machine!{
                     }
                 }
             }
+
+            assert
+                forall |i: nat, data: NodeData| #![auto] 
+                    i < pre.operation_history.dom().len()
+                implies
+                    count_inserts_up_to(i, data, pre.operation_history) == count_inserts_up_to(i, data, post.operation_history) &&
+                    count_deletes_up_to(i, data, pre.operation_history) == count_deletes_up_to(i, data, post.operation_history)
+            by {
+                stable_counts(data, i, pre.operation_history, post.operation_history);
+            };
         }
 
         property!{

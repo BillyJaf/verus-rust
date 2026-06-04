@@ -421,6 +421,17 @@ tokenized_state_machine!{
         }
 
         transition!{
+            delete_fail_empty_list(delete_car: NodeData)
+            {   
+                require(delete_car != NodeData::Nil);
+                have data_map >= [NodeData::Nil => None];
+
+                birds_eye let next_operation_index = pre.operation_history.dom().len();
+                add operation_history += [next_operation_index => Operation::DeleteFail(delete_car)];
+            }
+        }
+
+        transition!{
             delete_fail_car_too_small(delete_car: NodeData, first_car: NodeData)
             {   
                 require(delete_car != NodeData::Nil);
@@ -731,6 +742,21 @@ tokenized_state_machine!{
             };
         }
 
+        #[inductive(delete_fail_empty_list)]
+        fn delete_fail_empty_list_inductive(pre: Self, post: Self, delete_car: NodeData) {
+            assert
+                forall |i: nat, data: NodeData| #![auto] 
+                    i < pre.operation_history.dom().len()
+                implies
+                    count_inserts_up_to(i, data, pre.operation_history) == count_inserts_up_to(i, data, post.operation_history) &&
+                    count_deletes_up_to(i, data, pre.operation_history) == count_deletes_up_to(i, data, post.operation_history)
+            by {
+                stable_counts(data, i, pre.operation_history, post.operation_history);
+            };
+
+            assert(!pre.data_map.dom().contains(delete_car));
+        }
+
         #[inductive(delete_fail_car_too_small)]
         fn delete_fail_car_too_small_inductive(pre: Self, post: Self, delete_car: NodeData, first_car: NodeData) {
             assert
@@ -839,9 +865,12 @@ struct_with_invariants!{
 }
 
 impl LockedNil {
-    fn new() -> (locked_nil: Self)
+    fn new() -> ((locked_nil, witness_token) : (Self, Tracked<machine::operation_history>))
         ensures 
             locked_nil.wf(),
+            witness_token.instance_id() == locked_nil.view_instance().id(),
+            witness_token.value() == Operation::CreateNil
+
     {
         let tracked (
             Tracked(instance),
@@ -862,15 +891,22 @@ impl LockedNil {
         let node = Nil { cdr: None::<Arc<LockedCons>>, map_token: Tracked(map_token) };
         let (cell, Tracked(perm)) = PCell::new(node);
         let atomic = AtomicBool::new(Ghost((cell, Tracked(instance))), false, Tracked(Some(perm)));
-        Self { 
+        let locked_nil = Self { 
             atomic, 
             cell, 
             instance: Tracked(instance)
-        }
+        };
+
+        return (locked_nil, Tracked(witness_token))
     }
 
     pub open spec fn view_car(&self) -> NodeData {
         NodeData::Nil
+    }
+
+    pub closed spec fn view_instance(&self) -> (instance: machine::Instance)
+    {
+        self.instance@
     }
 
     fn acquire_lock(&self) -> (points_to: Tracked<PointsTo<Nil>>)
@@ -1059,11 +1095,16 @@ impl LockedNil {
         }
     }
 
-    fn delete(self: Arc<Self>, delete_car_raw: u32)
+    fn delete(self: Arc<Self>, delete_car_raw: u32) -> (witness_token: Tracked<machine::operation_history>)
         requires
             self.wf()
         ensures
-            self.wf()
+            self.wf(),
+            witness_token.instance_id() == self.view_instance().id(),
+            (
+                witness_token.value() == Operation::Delete(NodeData::CAR(delete_car_raw)) || 
+                witness_token.value() == Operation::DeleteFail(NodeData::CAR(delete_car_raw))
+            )
     {
         let delete_car = NodeData::CAR(delete_car_raw);
         // Acquire the lock for the nil node, and view the data inside (without taking)
@@ -1072,11 +1113,20 @@ impl LockedNil {
 
         // If the nil cdr is none, then we are done - no tokens exist ==> no nodes exist
         if (nil_view.cdr.is_none()) {
+            let tracked token_tuple;
+            let tracked witness_token;
+
             proof {
-                self.instance.delete_successful_empty_list(delete_car, nil_view.map_token.borrow());
+                token_tuple = self.instance.borrow().delete_fail_empty_list(
+                    delete_car, 
+                    nil_view.map_token.borrow()
+                );
+
+                witness_token = token_tuple.1.get();
             }
+
             self.release_lock(nil_perm);
-            return;
+            return Tracked(witness_token);
         }
 
         // We check if we need to delete the first Cons (hence lower is LockedNil)
@@ -1086,17 +1136,22 @@ impl LockedNil {
 
         // If the first car is larger than our delete, then we are done - no tokens exist ==> no nodes exist
         if (delete_car_raw < first_cons_view.car) {
+            let tracked token_tuple;
+            let tracked witness_token;
+
             proof {
-                self.instance.delete_successful_car_not_in_list(
-                    self.view_car(), 
-                    delete_car, 
-                    nil_view.map_token.value(), 
+                token_tuple = self.instance.borrow().delete_fail_car_too_small(
+                    delete_car,
+                    first_locked_cons.view_car(),
                     nil_view.map_token.borrow()
                 );
+
+                witness_token = token_tuple.1.get();
             }
+
             self.release_lock(nil_perm);
             first_locked_cons.release_lock(first_cons_perm);
-            return;
+            return Tracked(witness_token);
         }
 
         // Check if we are deleting the first LockedCons:
@@ -1124,25 +1179,16 @@ impl LockedNil {
             nil.map_token = Tracked(updated_nil_token);
             nil.cdr = first_cons.cdr;
 
-            proof {
-                self.instance.delete_successful_car_not_in_list(
-                    self.view_car(), 
-                    delete_car, 
-                    nil.map_token.value(), 
-                    nil.map_token.borrow()
-                );
-            }
-
             self.cell.put(Tracked(nil_perm.borrow_mut()), nil);
             self.release_lock(nil_perm);
 
-            return;
+            return Tracked(witness_token);
         }
         
         // We can release the dummy node lock.
         self.release_lock(nil_perm);
         // and begin our traversal:
-        first_locked_cons.delete(first_cons_perm, delete_car_raw);
+        return first_locked_cons.delete(first_cons_perm, delete_car_raw);
     }
 }
 
@@ -1452,7 +1498,7 @@ impl LockedCons {
         }
     }
 
-    fn delete(self: Arc<Self>, mut current_cons_perm: Tracked<PointsTo<Cons>>, delete_car_raw: u32)
+    fn delete(self: Arc<Self>, mut current_cons_perm: Tracked<PointsTo<Cons>>, delete_car_raw: u32) -> (witness_token: Tracked<machine::operation_history>)
         requires
             self.wf(),
             current_cons_perm.is_init(),
@@ -1471,7 +1517,12 @@ impl LockedCons {
             ),
             current_cons_perm.value().car < delete_car_raw
         ensures
-            self.wf()
+            self.wf(),
+            witness_token.instance_id() == self.view_instance().id(),
+            (
+                witness_token.value() == Operation::Delete(NodeData::CAR(delete_car_raw)) || 
+                witness_token.value() == Operation::DeleteFail(NodeData::CAR(delete_car_raw))
+            )
     {
         let delete_car = NodeData::CAR(delete_car_raw);
         let mut current_locked_cons = self;
@@ -1479,6 +1530,7 @@ impl LockedCons {
             invariant
                 self.wf(),
                 current_locked_cons.wf(),
+                current_locked_cons.instance == self.instance,
                 current_cons_perm.is_init(),
                 current_cons_perm.id() == current_locked_cons.cell.id(),
                 NodeData::CAR(current_cons_perm.value().car) == current_locked_cons.view_car,
@@ -1503,16 +1555,21 @@ impl LockedCons {
             // If there is no next LockedCons, then we have reached the tail.
             // If we have not deleted by now, then we are done - no tokens exist ==> no nodes exist
             if (current_cons_view.cdr.is_none()) {
+                let tracked token_tuple;
+                let tracked witness_token;
+
                 proof {
-                    current_locked_cons.instance.delete_successful_car_not_in_list(
-                        current_locked_cons.view_car(), 
+                    token_tuple = current_locked_cons.instance.borrow().delete_fail_car_too_large(
+                        current_locked_cons.view_car(),
                         delete_car, 
-                        current_cons_view.map_token.value(), 
                         current_cons_view.map_token.borrow()
                     );
+
+                    witness_token = token_tuple.1.get();
                 }
+
                 current_locked_cons.release_lock(current_cons_perm);
-                return;
+                return Tracked(witness_token);
             } 
             // Otherwise, there is another LockedCons
             else {
@@ -1526,17 +1583,23 @@ impl LockedCons {
                 // Which means that no node exist with value delete_car.
                 // We are done - no tokens exist ==> no nodes exist
                 if (delete_car_raw < next_cons_view.car) {
+                    let tracked token_tuple;
+                    let tracked witness_token;
+
                     proof {
-                        current_locked_cons.instance.delete_successful_car_not_in_list(
-                            current_locked_cons.view_car(), 
+                        token_tuple = current_locked_cons.instance.borrow().delete_fail_car_inbetween(
+                            current_locked_cons.view_car(),
                             delete_car, 
-                            current_cons_view.map_token.value(), 
+                            next_locked_cons.view_car(),
                             current_cons_view.map_token.borrow()
                         );
+
+                        witness_token = token_tuple.1.get();
                     }
+
                     current_locked_cons.release_lock(current_cons_perm);
                     next_locked_cons.release_lock(next_cons_perm);
-                    return;
+                    return Tracked(witness_token);
                 }
 
                 // Check if we are deleting the first LockedCons:
@@ -1564,18 +1627,9 @@ impl LockedCons {
                     current_cons.map_token = Tracked(updated_current_cons_token);
                     current_cons.cdr = next_cons.cdr;
 
-                    proof {
-                        current_locked_cons.instance.delete_successful_car_not_in_list(
-                            current_locked_cons.view_car(), 
-                            delete_car, 
-                            current_cons.map_token.value(), 
-                            current_cons.map_token.borrow()
-                        );
-                    }
-
                     current_locked_cons.cell.put(Tracked(current_cons_perm.borrow_mut()), current_cons);
                     current_locked_cons.release_lock(current_cons_perm);
-                    return;
+                    return Tracked(witness_token);
                 }
 
                 // Otherwise, we give up the previous lock, and loop again
@@ -1597,29 +1651,44 @@ impl LinkedList {
         self.locked_nil.wf()
     }
 
-    pub fn new() -> (linked_list: Self)
+    pub fn new() -> ((linked_list, witness_token) : (Self, Tracked<machine::operation_history>))
         ensures
-            linked_list.wf()
+            linked_list.wf(),
+            witness_token.instance_id() == linked_list.locked_nil.view_instance().id(),
+            witness_token.value() == Operation::CreateNil
     {
-        Self { locked_nil: Arc::new(LockedNil::new()) }
+        let (locked_nil, witness_token) = LockedNil::new();
+        let linked_list = Self { locked_nil: Arc::new(locked_nil) };
+
+        return (linked_list, witness_token)
     }
 
-    pub fn insert(self, data: u32) 
+    pub fn insert(self, data: u32) -> (witness_token: Tracked<machine::operation_history>)
         requires
             self.wf()
         ensures
-            self.wf()
+            self.wf(),
+            witness_token.instance_id() == self.locked_nil.view_instance().id(),
+            (
+                witness_token.value() == Operation::Insert(NodeData::CAR(data)) || 
+                witness_token.value() == Operation::InsertFail(NodeData::CAR(data))
+            )
     {
-        self.locked_nil.insert(data);
+        self.locked_nil.insert(data)
     }
 
-    pub fn delete(self, data: u32) 
+    pub fn delete(self, data: u32) -> (witness_token: Tracked<machine::operation_history>)
         requires
             self.wf()
         ensures
-            self.wf()
+            self.wf(),
+            witness_token.instance_id() == self.locked_nil.view_instance().id(),
+            (
+                witness_token.value() == Operation::Delete(NodeData::CAR(data)) || 
+                witness_token.value() == Operation::DeleteFail(NodeData::CAR(data))
+            )
     {
-        self.locked_nil.delete(data);
+        self.locked_nil.delete(data)
     }
 }
 

@@ -18,7 +18,6 @@ tokenized_state_machine!{
         fields {
             #[sharding(variable)]
             pub head_address: usize,
-
         }
 
         init!{
@@ -28,8 +27,19 @@ tokenized_state_machine!{
             }
         }
 
+        transition!{
+            add_one()
+            {
+
+                update head_address = (pre.head_address + 1) as usize;
+            }
+        }
+
         #[inductive(initialize)]
         fn initialize_inductive(post: Self) {}
+
+        #[inductive(add_one)]
+        fn initialize_add_one(pre: Self, post: Self) {}
     }
 }
 
@@ -62,7 +72,28 @@ impl TreiberStack {
         TreiberStack { head, instance: Tracked(instance) }
     }
 }
+
+fn main() {
+    let shared_stack = Arc::new(TreiberStack::new());
+
+    for i in 0..2
+        invariant shared_stack.wf(),
+    {
+        let thread_local_stack = shared_stack.clone();
+        let _ = vstd::thread::spawn(move || {
+            let current_usize = thread_local_stack.head.load();
+            assume(current_usize < usize::MAX);
+            let x = atomic_with_ghost!(
+                thread_local_stack.head => compare_exchange(current_usize, current_usize + 1);
+                returning result_previous_usize;
+                ghost points_to_inv => {
+                    if let Ok(previous_usize) = result_previous_usize {
+                        thread_local_stack.instance.add_one(&mut points_to_inv);
+                    }
+                }
+            );
+        });
+    }
 }
 
-// AtomicUsize<Tracked<Instance>, head_address, InvariantPredicate_auto_TreiberStack_head>
-// AtomicUsize<Instance,head_address, _>
+}

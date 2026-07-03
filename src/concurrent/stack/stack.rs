@@ -1,3 +1,4 @@
+#![cfg_attr(verus_keep_ghost, verifier::exec_allows_no_decreases_clause)]
 use verus_state_machines_macros::tokenized_state_machine;
 use verus_builtin::*;
 use verus_builtin_macros::*;
@@ -13,6 +14,18 @@ use vstd::{
 
 verus! {
 
+pub assume_specification<T> 
+[std::boxed::Box::<T>::into_raw] 
+(_0: std::boxed::Box<T>) -> *mut T
+    where
+    T: std::marker::MetaSized + ?Sized,;
+
+pub assume_specification<T>
+[std::boxed::Box::<T>::from_raw]
+(ptr: *mut T) -> std::boxed::Box<T>
+where
+    T: std::marker::MetaSized;
+
 tokenized_state_machine!{
     machine {
         fields {
@@ -23,33 +36,37 @@ tokenized_state_machine!{
         init!{
             initialize()
             {
+                init initialised = false;
                 init head_address = 0;
             }
         }
 
-        transition!{
-            add_one()
-            {
+        // transition!{
+        //     create_empty_stack()
+        //     {
 
-                update head_address = (pre.head_address + 1) as usize;
+        //         update head_address = new_head_address;
+        //     }
+        // }
+
+        transition!{
+            push(new_head_address: usize)
+            {
+                update head_address = new_head_address;
             }
         }
 
         #[inductive(initialize)]
         fn initialize_inductive(post: Self) {}
 
-        #[inductive(add_one)]
-        fn initialize_add_one(pre: Self, post: Self) {}
+        #[inductive(push)]
+        fn initialize_push(pre: Self, post: Self, new_head_address: usize) {}
     }
 }
 
 pub struct StackCell {
     pub elem: u32,
-    pub next: Option<PAtomicUsize>
-}
-
-pub fn pop(stack: Arc<TreiberStack>) {
-
+    pub next: usize,
 }
 
 struct_with_invariants!{
@@ -57,7 +74,8 @@ struct_with_invariants!{
         pub head: AtomicUsize<_, machine::head_address, _>,
         pub instance: Tracked<machine::Instance>,
     }
-    spec fn wf(self) -> bool {
+
+    pub open spec fn wf(self) -> bool {
         invariant on head with (instance) is (v: usize, g: machine::head_address) {
             g.instance_id() == instance@.id()
             && g.value() == v as int
@@ -66,34 +84,63 @@ struct_with_invariants!{
 }
 
 impl TreiberStack {
-    fn new() -> (s: Self) ensures s.wf() {
+    fn new() -> (s: Self)
+        ensures s.wf()
+    {
         let tracked (Tracked(instance), Tracked(head_address)) = machine::Instance::initialize();
         let head = AtomicUsize::new(Ghost(Tracked(instance)), 0, Tracked(head_address));
         TreiberStack { head, instance: Tracked(instance) }
+    }
+
+    pub fn push(self: Arc<Self>, elem: u32)
+        requires
+            self.wf()
+        ensures
+            self.wf()
+    {
+        loop 
+            invariant
+                self.wf()
+        {
+            let loaded_head = self.head.load();
+            let stack_cell = StackCell { elem, next: loaded_head };
+
+            let _ = atomic_with_ghost!(
+                self.head => compare_exchange(self.head.load(), loaded_head);
+                update prev -> next;
+                returning previous_head_result;
+
+                ghost points_to_inv => {
+                    if let Ok(previous_head) = previous_head_result {
+                        self.instance.push(loaded_head, &mut points_to_inv);
+                    }
+                }
+            );
+        }
+    }
+
+    pub fn pop(self: Arc<Self>) -> (elem: Option<u32>)
+        requires
+            self.wf()
+        ensures
+            self.wf()
+    {
+        loop 
+            invariant
+                self.wf()
+        {
+            let old_head_address = self.head.load();
+            if old_head_address == 0 {
+                return None;
+            }
+
+            let new_head = *usize_to_stackcell_ptr(old_head_address);
+        }
     }
 }
 
 fn main() {
     let shared_stack = Arc::new(TreiberStack::new());
-
-    for i in 0..2
-        invariant shared_stack.wf(),
-    {
-        let thread_local_stack = shared_stack.clone();
-        let _ = vstd::thread::spawn(move || {
-            let current_usize = thread_local_stack.head.load();
-            assume(current_usize < usize::MAX);
-            let x = atomic_with_ghost!(
-                thread_local_stack.head => compare_exchange(current_usize, current_usize + 1);
-                returning result_previous_usize;
-                ghost points_to_inv => {
-                    if let Ok(previous_usize) = result_previous_usize {
-                        thread_local_stack.instance.add_one(&mut points_to_inv);
-                    }
-                }
-            );
-        });
-    }
 }
 
 }

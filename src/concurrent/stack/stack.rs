@@ -10,49 +10,38 @@ use vstd::{
     pervasive::*, 
     seq_lib::*,
     atomic::*,
+    simple_pptr::*,
 };
 
 verus! {
-
-pub assume_specification<T> 
-[std::boxed::Box::<T>::into_raw] 
-(_0: std::boxed::Box<T>) -> *mut T
-    where
-    T: std::marker::MetaSized + ?Sized,;
-
-pub assume_specification<T>
-[std::boxed::Box::<T>::from_raw]
-(ptr: *mut T) -> std::boxed::Box<T>
-where
-    T: std::marker::MetaSized;
 
 tokenized_state_machine!{
     machine {
         fields {
             #[sharding(variable)]
-            pub head_address: usize,
+            pub head_address: Seq<PointsTo<StackCell>>,
         }
+
+
 
         init!{
             initialize()
             {
-                init initialised = false;
-                init head_address = 0;
+                init head_address = Seq::empty();
             }
         }
 
-        // transition!{
-        //     create_empty_stack()
-        //     {
-
-        //         update head_address = new_head_address;
-        //     }
-        // }
+        transition!{
+            push(points_to: PointsTo<StackCell>)
+            {
+                update head_address = pre.head_address.push(points_to);
+            }
+        }
 
         transition!{
-            push(new_head_address: usize)
+            pop()
             {
-                update head_address = new_head_address;
+                update head_address = pre.head_address.drop_last();
             }
         }
 
@@ -60,10 +49,19 @@ tokenized_state_machine!{
         fn initialize_inductive(post: Self) {}
 
         #[inductive(push)]
-        fn initialize_push(pre: Self, post: Self, new_head_address: usize) {}
+        fn push_inductive(pre: Self, post: Self, points_to: PointsTo<StackCell>) { }
+
+        #[inductive(pop)]
+        fn pop_inductive(pre: Self, post: Self) { }
     }
 }
 
+pub struct TokenPermAndPointers {
+    pub token: Tracked<machine::head_address>,
+    pub pointers: Ghost<Seq<PPtr<StackCell>>>
+}
+
+#[derive(Copy, Clone)]
 pub struct StackCell {
     pub elem: u32,
     pub next: usize,
@@ -71,24 +69,63 @@ pub struct StackCell {
 
 struct_with_invariants!{
     pub struct TreiberStack {
-        pub head: AtomicUsize<_, machine::head_address, _>,
+        pub head: AtomicUsize<_, TokenPermAndPointers, _>,
         pub instance: Tracked<machine::Instance>,
     }
 
     pub open spec fn wf(self) -> bool {
-        invariant on head with (instance) is (v: usize, g: machine::head_address) {
-            g.instance_id() == instance@.id()
-            && g.value() == v as int
+        invariant on head with (instance) is (v: usize, tpaps: TokenPermAndPointers) {
+            // The token is from the correct TSM
+            tpaps.token@.instance_id() == instance.id() &&
+
+            // We always have the null pointer in the stack and it is at the base
+            tpaps.pointers.len() > 0  &&
+            tpaps.token@.value().len() == tpaps.pointers.len() &&
+            tpaps.token@.value()[0].is_uninit() &&
+
+            // Each token has the correct perm for the correspnding pointer
+            // The null pointer is the only uninit pointer (at the base)
+            (forall |i: int| #![auto] 0 <= i < tpaps.token@.value().len() ==> (
+                tpaps.token@.value()[i].pptr() == tpaps.pointers[i] &&
+                (tpaps.token@.value()[i].is_uninit() <==> i == 0)
+            )) &&
+
+            // If we only have the base, then we set v to 0 to represent the nullptr
+            (tpaps.token@.value().len() == 1 <==> v == 0) &&
+
+            // Otherwise, v should represent the address of the head
+            (tpaps.token@.value().len() > 1 ==> tpaps.token@.value().last().addr() == v)
+
+            // // The tokens all point to disjoints regions of memory:
+            // forall |i: int, j: int| #![auto] 0 <= i < j < tpaps.token@.value().len() ==> (
+            //     tpaps.token@.value()[i].is_disjoint(&tpaps.token@.value()[j])
+            // )
         }
     }
 }
 
 impl TreiberStack {
-    fn new() -> (s: Self)
-        ensures s.wf()
+    fn new() -> (treiber_stack: Self)
+        ensures treiber_stack.wf()
     {
-        let tracked (Tracked(instance), Tracked(head_address)) = machine::Instance::initialize();
-        let head = AtomicUsize::new(Ghost(Tracked(instance)), 0, Tracked(head_address));
+        let (base, Tracked(base_perm)) = PPtr::<StackCell>::empty();
+        let tracked (
+            Tracked(instance), 
+            Tracked(stack_token)
+        ) = machine::Instance::initialize();
+
+        proof {
+            instance.push(base_perm, &mut stack_token);
+        }
+
+        let base_address = base.addr();
+  
+        let ghost pointer_seq = Seq::empty().push(base);
+
+        let tpaps = TokenPermAndPointers { token: Tracked(stack_token), pointers: Ghost(pointer_seq) };
+
+        let head = AtomicUsize::new(Ghost(Tracked(instance)), 0, Tracked(tpaps));
+
         TreiberStack { head, instance: Tracked(instance) }
     }
 
@@ -102,41 +139,73 @@ impl TreiberStack {
             invariant
                 self.wf()
         {
-            let loaded_head = self.head.load();
-            let stack_cell = StackCell { elem, next: loaded_head };
+            let stack_cell = StackCell { elem, next: self.head.load() };
+            let (permissioned_stack_cell, Tracked(stack_cell_perm)) = PPtr::new(stack_cell);
+            
+            proof {
+                stack_cell_perm.is_nonnull()
+            }
 
-            let _ = atomic_with_ghost!(
-                self.head => compare_exchange(self.head.load(), loaded_head);
-                update prev -> next;
+            let mut push_result = atomic_with_ghost!(
+                self.head => compare_exchange(
+                    permissioned_stack_cell.read(Tracked(&stack_cell_perm)).next, 
+                    permissioned_stack_cell.addr()
+                );
                 returning previous_head_result;
 
                 ghost points_to_inv => {
                     if let Ok(previous_head) = previous_head_result {
-                        self.instance.push(loaded_head, &mut points_to_inv);
+
+                        self.instance.push(stack_cell_perm, &mut points_to_inv.token);
+                        points_to_inv.pointers = Ghost(points_to_inv.pointers@.push(permissioned_stack_cell));
                     }
                 }
             );
-        }
-    }
 
-    pub fn pop(self: Arc<Self>) -> (elem: Option<u32>)
-        requires
-            self.wf()
-        ensures
-            self.wf()
-    {
-        loop 
-            invariant
-                self.wf()
-        {
-            let old_head_address = self.head.load();
-            if old_head_address == 0 {
-                return None;
+            if let Ok(_) = push_result {
+                return;
             }
-
-            let new_head = *usize_to_stackcell_ptr(old_head_address);
         }
     }
+
+    // pub fn pop(self: Arc<Self>) -> (elem: Option<u32>)
+    //     requires
+    //         self.wf()
+    //     ensures
+    //         self.wf()
+    // {
+    //     loop 
+    //         invariant
+    //             self.wf()
+    //     {
+    //         // let tracked empty_stack;
+
+    //         let mut first_loaded_head = self.head.load();
+
+    //         if first_loaded_head == 0 {
+    //             return None;
+    //         }
+
+    //         let tracked next_cell_address;
+
+    //         let mut second_loaded_head = atomic_with_ghost!{
+    //             self.head => load()
+    //             returning previous_head_result;
+
+    //             ghost points_to_inv => {
+
+    //                 if let Ok(previous_head) = previous_head_result {
+
+    //                     self.instance.push(stack_cell_perm, &mut points_to_inv.token);
+    //                     points_to_inv.pointers = Ghost(points_to_inv.pointers@.push(permissioned_stack_cell));
+    //                 }
+    //             }
+    //         }
+
+    //         return Some(1);
+    //     }
+    //     // return Some(1);
+    // }
 }
 
 fn main() {

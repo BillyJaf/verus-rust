@@ -15,11 +15,28 @@ use vstd::{
 
 verus! {
 
+enum Operation {
+    Pop(u32),
+    Push(u32)
+}
+
 tokenized_state_machine!{
     machine {
         fields {
-            #[sharding(variable)]
-            pub head_address: Seq<PointsTo<StackCell>>,
+            // #[sharding(variable)]
+            // pub head_address: Seq<usize>,
+
+            // #[sharding(map)]
+            // pub active_stack_cells: Map<usize, PointsTo<StackCell>>,
+
+            // #[sharding(storage_map)]
+            // pub popped_stack_cells: Map<usize, StackCell>,
+
+            #[sharding(map)]
+            pub every_cell_ever: Map<usize, PointsTo<StackCell>>,
+
+            #[sharding(map)]
+            pub linearised_history: Map<int, Operation>,
         }
 
         init!{
@@ -177,6 +194,7 @@ impl TreiberStack {
                 self.wf()
         {
             let mut popped_value = None;
+            let ghost 
 
             let mut head_stack_cell_address = atomic_with_ghost!{
                 self.head => load();
@@ -187,8 +205,8 @@ impl TreiberStack {
                         // Then the top node is the base. i.e. we can't pop it:
                     } else {
                         // Then this is a real value:
-                        // assert(points_to_inv.token@.value().last().addr() == ret);
-                        // assert(points_to_inv.pointers@.last().addr() == ret);
+                        assert(points_to_inv.token@.value().last().addr() == ret);
+                        assert(points_to_inv.pointers@.last().addr() == ret);
                         
                     }
                 }
@@ -198,10 +216,28 @@ impl TreiberStack {
                 return popped_value;
             }
 
+            // usize
+            let permissioned_pointer = PPtr::from_addr(head_stack_cell_address);
+            let head_clone = permissioned_pointer.read(Tracked(&IDK));
 
-            return Some(1);
+            let mut possible_pop = atomic_with_ghost!{
+                self.head => compare_exchange(
+                    permissioned_pointer.addr(), 
+                    head_clone.next()
+                );
+
+                returning ret;
+
+                ghost points_to_inv => {
+                    self.instance.pop(&mut points_to_inv.token);
+                    points_to_inv.pointers = Ghost(points_to_inv.pointers@.drop_last());
+                }
+            };
+
+            if let Ok(result) = possible_pop {
+                return Some(head_clone.elem);
+            }
         }
-        // return Some(1);
     }
 }
 

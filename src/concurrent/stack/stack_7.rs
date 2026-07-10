@@ -11,11 +11,11 @@ use vstd::{
     seq_lib::*,
     atomic::*,
     simple_pptr::*,
-    set_lib::*,
-    map_lib::*,
 };
 
 verus! {
+
+global layout StackCell is size == 16;
 
 pub enum Operation {
     Pop(u32),
@@ -30,7 +30,7 @@ tokenized_state_machine!{
             pub base_address: usize,
 
             #[sharding(variable)]
-            pub permission_guard: Set<PointsTo<StackCell>>,
+            pub cell_addresses: Set<usize>,
 
             #[sharding(persistent_map)]
             pub address_permissions_witnesses: Map<usize, PointsTo<StackCell>>,
@@ -43,21 +43,8 @@ tokenized_state_machine!{
         }
 
         #[invariant]
-        pub fn permission_guards_correctly_represent_permissions_inv(&self) -> bool {
-            (self.permission_guard == self.address_permissions.values()) && (
-            forall |points_to: PointsTo<StackCell>| #![auto]
-                self.permission_guard.contains(points_to) <==>
-                    self.address_permissions.dom().contains(points_to.addr())
-            )
-        }
-
-        #[invariant]
-        pub fn permission_guards_correctly_represent_witnesses_inv(&self) -> bool {
-            (self.permission_guard == self.address_permissions_witnesses.values()) && (
-            forall |points_to: PointsTo<StackCell>| #![auto]
-                self.permission_guard.contains(points_to) <==>
-                    self.address_permissions_witnesses.dom().contains(points_to.addr())
-            )
+        pub fn uninitialised_operation_inv(&self) -> bool {
+            self.address_permissions.dom() == self.cell_addresses
         }
 
         #[invariant]
@@ -83,7 +70,7 @@ tokenized_state_machine!{
             initialize(base_address: usize)
             {
                 init base_address = base_address;
-                init permission_guard = Set::empty();
+                init cell_addresses = Set::empty();
                 init address_permissions_witnesses = Map::empty();
                 init address_permissions = Map::empty();
                 init linearised_history = Map::empty();
@@ -91,27 +78,26 @@ tokenized_state_machine!{
         }
 
         transition!{
-            create_base(points_to: PointsTo<StackCell>)
+            create_base(addr: usize, points_to: PointsTo<StackCell>)
             {
-                require(points_to.addr() == pre.base_address);
-                require(pre.permission_guard.is_empty());
-                require(!pre.permission_guard.contains(points_to));
+                require(addr == points_to.addr());
+                require(pre.cell_addresses.is_empty());
 
-                update permission_guard = pre.permission_guard.insert(points_to);
-                deposit address_permissions += [points_to.addr() => points_to];
-                add address_permissions_witnesses (union)= [points_to.addr() => points_to];
+                update cell_addresses = pre.cell_addresses.insert(addr);
+                deposit address_permissions += [addr => points_to];
+                add address_permissions_witnesses (union)= [addr => points_to];
             }
         }
 
         transition!{
-            push(points_to: PointsTo<StackCell>)
+            push(addr: usize, points_to: PointsTo<StackCell>)
             {
-                // require(points_to.addr() != pre.base_address);
-                require(!pre.permission_guard.contains(points_to));
+                require(addr == points_to.addr());
+                require(!pre.cell_addresses.contains(addr));
 
-                update permission_guard = pre.permission_guard.insert(points_to);
-                deposit address_permissions += [points_to.addr() => points_to];
-                add address_permissions_witnesses (union)= [points_to.addr() => points_to];
+                update cell_addresses = pre.cell_addresses.insert(addr);
+                deposit address_permissions += [addr => points_to];
+                add address_permissions_witnesses (union)= [addr => points_to];
             }
         }
 
@@ -130,97 +116,13 @@ tokenized_state_machine!{
         }
 
         #[inductive(initialize)]
-        fn initialize_inductive(post: Self, base_address: usize) {
-            assert(post.permission_guard == post.address_permissions_witnesses.values());
-        }
+        fn initialize_inductive(post: Self, base_address: usize) {}
 
         #[inductive(create_base)]
-        fn create_base_inductive(pre: Self, post: Self, points_to: PointsTo<StackCell>) {
-            broadcast use group_set_properties;
-            broadcast use group_map_properties;
-            // assert();
-            assume(post.permission_guard == post.address_permissions.values());
-            // assume(post.permission_guard == post.address_permissions_witnesses.values());
-
-            assert(
-                forall |points_to: PointsTo<StackCell>| #![auto]
-                    post.permission_guard.contains(points_to) ==>
-                        post.address_permissions.dom().contains(points_to.addr())
-            );
-
-            // assume(
-            //     forall |points_to: PointsTo<StackCell>| #![auto]
-            //         post.address_permissions.dom().contains(points_to.addr()) ==>
-            //             post.permission_guard.contains(points_to)
-            // );
-            assert(post.address_permissions.dom().contains(points_to.addr()));
-            assert(post.permission_guard.contains(points_to));
-
-            // assert(
-            //     forall |points_to: PointsTo<StackCell>| #![auto]
-            //         post.address_permissions.dom().contains(points_to.addr()) ==>
-            //             post.permission_guard.contains(points_to)
-            // );
-
-            assert
-                forall |perm: PointsTo<StackCell>|
-                    post.address_permissions.dom().contains(perm.addr())
-                implies
-                    #[trigger] post.permission_guard.contains(perm)
-            by {
-                broadcast use group_set_properties;
-
-                // assert(
-                //     forall |perm: PointsTo<StackCell>| #![auto]
-                //         pre.address_permissions.dom().contains(perm.addr()) <==>
-                //             pre.permission_guard.contains(perm)
-                // );
-
-                // assert(
-                //     forall |perm: PointsTo<StackCell>| #![auto]
-                //         pre.address_permissions.dom().contains(perm.addr()) ==>
-                //             post.address_permissions.dom().contains(perm.addr())
-                // );
-                assert(pre.address_permissions.dom().contains(perm.addr()) ==> pre.permission_guard.contains(perm));
-                assert(pre.address_permissions.dom().insert(points_to.addr()) == post.address_permissions.dom());
-                assert(pre.permission_guard.insert(points_to) == post.permission_guard);
-
-                if (perm == points_to) {
-                    assume(false);
-                } else {
-                    // assert(post.address_permissions.dom() == pre.address_permissions.dom().insert(points_to.addr()));
-                    assert(post.address_permissions.dom() == pre.address_permissions.dom().insert(points_to.addr()));
-                    assert(perm != points_to);
-                    // proof {
-                    //     perm.is_distinct(&points_to);
-                    // }
-                    // PointsTo::is_disjoint(&mut perm, &points_to);
-
-                    assert(perm.addr() != points_to.addr());
-                    assert(post.address_permissions.dom().contains(perm.addr()) ==> pre.address_permissions.dom().contains(perm.addr()));
-
-                    assert(post.address_permissions.dom().contains(perm.addr()) ==> post.permission_guard.contains(perm));
-                }
-
-
-                // assert(
-                //     forall |perm2: PointsTo<StackCell>| #![auto]
-                //         ((post.address_permissions.dom().contains(perm2.addr())) ==>
-                //             pre.address_permissions.dom().contains(perm2.addr())) || perm2 == points_to
-                // );
-
-                // assert(pre.permission_guard.insert(points_to) == post.permission_guard);
-            };   
-        }
+        fn create_base_inductive(pre: Self, post: Self, addr: usize, points_to: PointsTo<StackCell>) { }
 
         #[inductive(push)]
-        fn push_inductive(pre: Self, post: Self, points_to: PointsTo<StackCell>) {
-            assert(pre.permission_guard == pre.address_permissions_witnesses.values());
-            assert(!pre.permission_guard.contains(points_to));
-            assert(!pre.address_permissions.dom().contains(points_to.addr()));
-            assume(post.permission_guard == post.address_permissions_witnesses.values());
-
-            assume(false);
+        fn push_inductive(pre: Self, post: Self, addr: usize, points_to: PointsTo<StackCell>) {
         }
 
         // #[inductive(pop)]
@@ -230,7 +132,7 @@ tokenized_state_machine!{
 
 pub struct AtomicTokens {
     pub cell_witnesses: Tracked<Map<usize, machine::address_permissions_witnesses>>,
-    pub permission_guard: Tracked<machine::permission_guard>
+    pub cell_addresses: Tracked<machine::cell_addresses>
 }
 
 #[derive(Copy, Clone)]
@@ -252,7 +154,7 @@ struct_with_invariants!{
                 base_address == instance.base_address()
             ) &&
             (
-                atomic_tokens.permission_guard.instance_id() == instance.id()
+                atomic_tokens.cell_addresses.instance_id() == instance.id()
             ) &&
             (
                 forall |map_key: usize| #![auto]
@@ -290,7 +192,7 @@ impl TreiberStack {
 
         let tracked (
             Tracked(instance), 
-            Tracked(permission_guard),
+            Tracked(cell_addresses),
             Tracked(address_permissions_witnesses),
             Tracked(linearised_history)
         ) = machine::Instance::initialize(base_address, Map::tracked_empty());
@@ -298,13 +200,13 @@ impl TreiberStack {
         let tracked witness_tokens = Map::tracked_empty();
 
         proof {
-            let tracked base_witness = instance.create_base(base_perm, &mut permission_guard, base_perm);
+            let tracked base_witness = instance.create_base(base_address, base_perm, &mut cell_addresses, base_perm);
             witness_tokens.tracked_insert(base_address, base_witness);
         }
 
         let atomic_tokens = AtomicTokens {
             cell_witnesses: Tracked(witness_tokens),
-            permission_guard: Tracked(permission_guard)
+            cell_addresses: Tracked(cell_addresses)
         };
 
         let head = AtomicUsize::new(Ghost((base_address, Tracked(instance))), base_address, Tracked(atomic_tokens));
@@ -324,6 +226,7 @@ impl TreiberStack {
         {
             let stack_cell = StackCell { elem, next: self.head.load() };
             let (permissioned_stack_cell, Tracked(stack_cell_perm)) = PPtr::new(stack_cell);
+            let stack_cell_address = permissioned_stack_cell.addr();
 
             let mut push_result = atomic_with_ghost!(
                 self.head => compare_exchange(
@@ -334,8 +237,14 @@ impl TreiberStack {
 
                 ghost points_to_inv => {
                     if let Ok(previous_head) = previous_head_result {
-                        assume(!points_to_inv.permission_guard.value().contains(stack_cell_perm));
-                        let tracked witness_token = self.instance.push(stack_cell_perm, &mut points_to_inv.permission_guard, stack_cell_perm);
+                        assume(points_to_inv.cell_witnesses.dom().contains(stack_cell_perm.addr()));
+                        let tracked witness_token = points_to_inv.cell_witnesses.tracked_borrow(stack_cell_perm.addr()); 
+                        let tracked token_ref = self.instance.get_permission_reference(witness_token.key(), witness_token.value(), &witness_token);
+                        stack_cell_perm.is_distinct(token_ref);
+                        assert(false);
+
+                        assert(!points_to_inv.cell_addresses.value().contains(stack_cell_perm.addr()));
+                        let tracked witness_token = self.instance.push(stack_cell_address, stack_cell_perm, &mut points_to_inv.cell_addresses, stack_cell_perm);
                         points_to_inv.cell_witnesses.tracked_insert(witness_token.key(), witness_token);
                     }
                 }
@@ -408,5 +317,4 @@ impl TreiberStack {
 fn main() {
     let shared_stack = Arc::new(TreiberStack::new());
 }
-
 }

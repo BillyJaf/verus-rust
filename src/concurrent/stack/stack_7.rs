@@ -152,46 +152,42 @@ pub struct StackCell {
 struct_with_invariants!{
     pub struct TreiberStack {
         pub base_address: usize,
-        pub head: AtomicUsize<_, AtomicTokens, _>,
+        pub top_address: AtomicUsize<_, AtomicTokens, _>,
         pub instance: Tracked<machine::Instance>,
     }
 
     pub open spec fn wf(self) -> bool {
-        invariant on head with (base_address, instance) is (addr: usize, atomic_tokens: AtomicTokens) {
-            (
-                base_address == instance.base_address()
-            ) &&
-            (
-                atomic_tokens.cell_addresses.instance_id() == instance.id()
-            ) &&
-            (
-                forall |map_key: usize| #![auto]
-                    atomic_tokens.cell_addresses.value().contains(map_key) ==>
-                        atomic_tokens.cell_witnesses.dom().contains(map_key)
-            ) &&
-            (
-                forall |map_key: usize| #![auto]
-                    atomic_tokens.cell_witnesses.dom().contains(map_key) ==>
-                        atomic_tokens.cell_witnesses.index(map_key).instance_id() == instance.id()
-            ) &&
-            (
-                atomic_tokens.cell_witnesses.dom().contains(addr)
-            ) &&
-            (
-                forall |map_key: usize| #![auto]
-                    (atomic_tokens.cell_witnesses.dom().contains(map_key) && map_key != instance.base_address()) ==>
-                        atomic_tokens.cell_witnesses.index(map_key).value().is_init()
-            ) &&
-            (
-                forall |map_key: usize| #![auto]
-                    atomic_tokens.cell_witnesses.dom().contains(map_key) ==>
-                        atomic_tokens.cell_witnesses.index(map_key).key() == map_key
-            ) &&
-            (
-                forall |map_key: usize| #![auto]
-                    (atomic_tokens.cell_witnesses.dom().contains(map_key)) ==>
-                        atomic_tokens.cell_witnesses.index(map_key).value().addr() == map_key
-            )
+        invariant on top_address with (base_address, instance) is (top_address: usize, atomic_tokens: AtomicTokens) {
+            // The base address must reflect the TSM base address:
+            &&& base_address == instance.base_address()
+
+            // The base address is always present even before the first push:
+            &&& atomic_tokens.cell_addresses.value().contains(base_address)
+
+            // All tokens must come from the correct TSM:
+            &&& atomic_tokens.cell_addresses.instance_id() == instance.id()
+            &&& forall |address: usize| #![auto]
+                    atomic_tokens.cell_witnesses.dom().contains(address) ==>
+                        atomic_tokens.cell_witnesses.index(address).instance_id() == instance.id()
+            
+            // There is a witness token for the current address:
+            &&& atomic_tokens.cell_witnesses.dom().contains(top_address)
+
+            // The set of cell addresses should equal the domain of the witness tokens:
+            &&&  atomic_tokens.cell_addresses.value() == atomic_tokens.cell_witnesses.dom()
+
+            // Every witness token's permission points to initialised memory except for the witness of the base address:
+            &&& forall |address: usize| #![auto]
+                    atomic_tokens.cell_witnesses.dom().contains(address) ==> (
+                        address != base_address <==> atomic_tokens.cell_witnesses.index(address).value().is_init()
+                    )
+
+            // Each individual map entry must agree internally at the address it is referencing
+            &&& forall |address: usize| #![auto]
+                    atomic_tokens.cell_witnesses.dom().contains(address) ==> (
+                        atomic_tokens.cell_witnesses.index(address).key() == address &&
+                        atomic_tokens.cell_witnesses.index(address).value().addr() == address
+                    )
         }
     }
 }
@@ -222,9 +218,9 @@ impl TreiberStack {
             cell_addresses: Tracked(cell_addresses)
         };
 
-        let head = AtomicUsize::new(Ghost((base_address, Tracked(instance))), base_address, Tracked(atomic_tokens));
+        let top_address = AtomicUsize::new(Ghost((base_address, Tracked(instance))), base_address, Tracked(atomic_tokens));
 
-        TreiberStack { base_address, head, instance: Tracked(instance) }
+        TreiberStack { base_address, top_address, instance: Tracked(instance) }
     }
 
     pub fn push(self: Arc<Self>, elem: u32)
@@ -237,12 +233,12 @@ impl TreiberStack {
             invariant
                 self.wf()
         {
-            let stack_cell = StackCell { elem, next: self.head.load() };
+            let stack_cell = StackCell { elem, next: self.top_address.load() };
             let (permissioned_stack_cell, Tracked(stack_cell_perm)) = PPtr::new(stack_cell);
             let stack_cell_address = permissioned_stack_cell.addr();
 
             let mut push_result = atomic_with_ghost!(
-                self.head => compare_exchange(
+                self.top_address => compare_exchange(
                     permissioned_stack_cell.read(Tracked(&stack_cell_perm)).next, 
                     permissioned_stack_cell.addr()
                 );
@@ -250,11 +246,12 @@ impl TreiberStack {
 
                 ghost points_to_inv => {
                     if let Ok(previous_head) = previous_head_result {
-                        assume(points_to_inv.cell_witnesses.dom().contains(stack_cell_perm.addr()));
-                        let tracked witness_token = points_to_inv.cell_witnesses.tracked_borrow(stack_cell_perm.addr()); 
-                        let tracked token_ref = self.instance.get_permission_reference(witness_token.key(), witness_token.value(), &witness_token);
-                        stack_cell_perm.is_distinct(token_ref);
-                        assert(false);
+                        if points_to_inv.cell_witnesses@.dom().contains(stack_cell_perm.addr()) {
+                            let tracked witness_token = points_to_inv.cell_witnesses.tracked_borrow(stack_cell_perm.addr()); 
+                            let tracked token_ref = self.instance.get_permission_reference(witness_token.key(), witness_token.value(), &witness_token);
+                            stack_cell_perm.is_distinct(token_ref);
+                            assert(false);
+                        }
 
                         let tracked witness_token = self.instance.push(stack_cell_address, stack_cell_perm, &mut points_to_inv.cell_addresses, stack_cell_perm);
                         points_to_inv.cell_witnesses.tracked_insert(witness_token.key(), witness_token);
@@ -283,7 +280,7 @@ impl TreiberStack {
             let tracked token_ref; 
 
             let mut head_stack_cell_address = atomic_with_ghost!{
-                self.head => load();
+                self.top_address => load();
                 returning addr;
 
                 ghost points_to_inv => {
@@ -305,7 +302,7 @@ impl TreiberStack {
             let head_read = permissioned_pointer.read(Tracked(token_ref));
 
             let mut possible_new_head_address = atomic_with_ghost!{
-                self.head => compare_exchange(
+                self.top_address => compare_exchange(
                     head_stack_cell_address, 
                     head_read.next
                 );

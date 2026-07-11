@@ -66,6 +66,13 @@ tokenized_state_machine!{
                     self.address_permissions_witnesses.index(addr).addr() == addr
         }
 
+        #[invariant]
+        pub fn stack_has_valid_witnesses(&self) -> bool {
+            forall |addr: usize| #![auto]
+                (self.address_permissions_witnesses.dom().contains(addr) && addr != self.base_address) ==>
+                    self.address_permissions_witnesses.dom().contains(self.address_permissions_witnesses.index(addr).value().next)
+        }
+
         init!{
             initialize(base_address: usize)
             {
@@ -80,6 +87,7 @@ tokenized_state_machine!{
         transition!{
             create_base(addr: usize, points_to: PointsTo<StackCell>)
             {
+                require(addr == pre.base_address);
                 require(addr == points_to.addr());
                 require(pre.cell_addresses.is_empty());
 
@@ -92,6 +100,7 @@ tokenized_state_machine!{
         transition!{
             push(addr: usize, points_to: PointsTo<StackCell>)
             {
+                require(pre.cell_addresses.contains(points_to.value().next));
                 require(addr == points_to.addr());
                 require(!pre.cell_addresses.contains(addr));
 
@@ -101,13 +110,6 @@ tokenized_state_machine!{
             }
         }
 
-        // transition!{
-        //     pop()
-        //     {
-        //         update head_address = pre.head_address.drop_last();
-        //     }
-        // }
-
         property!{
             get_permission_reference(addr: usize, permission: PointsTo<StackCell>) {
                 have address_permissions_witnesses >= [addr => permission];
@@ -115,18 +117,24 @@ tokenized_state_machine!{
             }
         }
 
+        property!{
+            have_stack_witness(addr: usize, permission: PointsTo<StackCell>) {
+                have address_permissions_witnesses >= [addr => permission];
+                require(addr != pre.base_address);
+                assert(pre.cell_addresses.contains(permission.value().next));
+
+            }
+        }
+
         #[inductive(initialize)]
         fn initialize_inductive(post: Self, base_address: usize) {}
 
         #[inductive(create_base)]
-        fn create_base_inductive(pre: Self, post: Self, addr: usize, points_to: PointsTo<StackCell>) { }
+        fn create_base_inductive(pre: Self, post: Self, addr: usize, points_to: PointsTo<StackCell>) {}
 
         #[inductive(push)]
         fn push_inductive(pre: Self, post: Self, addr: usize, points_to: PointsTo<StackCell>) {
         }
-
-        // #[inductive(pop)]
-        // fn pop_inductive(pre: Self, post: Self) { }
     }
 }
 
@@ -155,6 +163,11 @@ struct_with_invariants!{
             ) &&
             (
                 atomic_tokens.cell_addresses.instance_id() == instance.id()
+            ) &&
+            (
+                forall |map_key: usize| #![auto]
+                    atomic_tokens.cell_addresses.value().contains(map_key) ==>
+                        atomic_tokens.cell_witnesses.dom().contains(map_key)
             ) &&
             (
                 forall |map_key: usize| #![auto]
@@ -243,7 +256,6 @@ impl TreiberStack {
                         stack_cell_perm.is_distinct(token_ref);
                         assert(false);
 
-                        assert(!points_to_inv.cell_addresses.value().contains(stack_cell_perm.addr()));
                         let tracked witness_token = self.instance.push(stack_cell_address, stack_cell_perm, &mut points_to_inv.cell_addresses, stack_cell_perm);
                         points_to_inv.cell_witnesses.tracked_insert(witness_token.key(), witness_token);
                     }
@@ -302,7 +314,9 @@ impl TreiberStack {
 
                 ghost points_to_inv => {
                     if let Ok(_) = possible_new_head_address {
-                        assume(points_to_inv.cell_witnesses.dom().contains(new_head_address));
+                        assert(head_read.next == new_head_address);
+                        self.instance.have_stack_witness(witness_token.key(), witness_token.value(), &points_to_inv.cell_addresses, &witness_token);
+                        assert(points_to_inv.cell_addresses.value().contains(new_head_address));
                     }
                 }
             };

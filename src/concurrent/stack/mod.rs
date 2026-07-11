@@ -1,2 +1,2 @@
 #[verifier::verify]
-pub mod stack_7;
+pub mod stack;

@@ -11,6 +11,8 @@ use vstd::{
     seq_lib::*,
     atomic::*,
     simple_pptr::*,
+    map_lib::*,
+    set_lib::*,
 };
 
 verus! {
@@ -78,13 +80,71 @@ decreases linearised_history.len() - operation_index
     if operation_index >= linearised_history.len() {
         current_stack
     } else {
-        match linearised_history[operation_index] {
-            Operation::InitBase => replay_history((operation_index + 1) as nat, linearised_history, current_stack.push(CellRepresentation::Base)),
-            Operation::Push(elem) => replay_history((operation_index + 1) as nat, linearised_history, current_stack.push(CellRepresentation::Elem(elem))),
-            Operation::Pop(Some(_)) => replay_history((operation_index + 1) as nat, linearised_history, current_stack.drop_last()),
-            Operation::Pop(None) => replay_history((operation_index + 1) as nat, linearised_history, current_stack)
-        }
+        replay_history((operation_index + 1) as nat, linearised_history, apply_operation(linearised_history[operation_index], current_stack))
     }
+}
+
+pub open spec fn apply_operation(
+    operation: Operation,
+    current_stack: Seq<CellRepresentation>
+) -> Seq<CellRepresentation>
+{
+    match operation {
+        Operation::InitBase => current_stack.push(CellRepresentation::Base),
+        Operation::Push(elem) => current_stack.push(CellRepresentation::Elem(elem)),
+        Operation::Pop(Some(_)) => current_stack.drop_last(),
+        Operation::Pop(None) => current_stack
+    }
+}
+
+pub proof fn interchange_apply_and_replay(
+    operation_index: nat,
+    linearised_history: Map<nat, Operation>,
+    current_stack: Seq<CellRepresentation>,
+    appended_operation: Operation,
+)
+    requires
+        forall |i: nat| #![auto]
+            i < linearised_history.len() <==> linearised_history.dom().contains(i),
+        operation_index <= linearised_history.len(),
+        linearised_history.dom().finite()
+    ensures
+        replay_history(operation_index, linearised_history.insert(linearised_history.len(), appended_operation), current_stack) ==
+            apply_operation(appended_operation, replay_history(operation_index, linearised_history, current_stack))
+    decreases
+        linearised_history.len() - operation_index
+{
+    let extended = linearised_history.insert(linearised_history.len(), appended_operation);
+
+    if operation_index == linearised_history.len() {
+        
+        assert(replay_history(operation_index, extended, current_stack) == replay_history((operation_index + 1) as nat, extended, apply_operation(appended_operation, current_stack)));
+    }
+    else {
+        interchange_apply_and_replay((operation_index + 1) as nat, linearised_history, apply_operation(linearised_history[operation_index], current_stack), appended_operation)
+    }
+}
+
+pub proof fn replay_history_lemma(
+    pre_linearised_history: Map<nat, Operation>,
+    post_linearised_history: Map<nat, Operation>,
+    operation: Operation,
+)
+requires
+    forall |i: nat| #![auto]
+        i < pre_linearised_history.len() <==> pre_linearised_history.dom().contains(i),
+    pre_linearised_history.insert(pre_linearised_history.len(), operation) == post_linearised_history,
+    operation != Operation::InitBase,
+    pre_linearised_history.dom().finite()
+ensures
+    match operation {
+        Operation::Push(elem) => replay_history(0nat, pre_linearised_history, Seq::empty()).push(CellRepresentation::Elem(elem)) == replay_history(0nat, post_linearised_history, Seq::empty()),
+        Operation::Pop(Some(_)) => replay_history(0nat, pre_linearised_history, Seq::empty()).drop_last() == replay_history(0nat, post_linearised_history, Seq::empty()),
+        Operation::Pop(None) => replay_history(0nat, pre_linearised_history, Seq::empty()) == replay_history(0nat, post_linearised_history, Seq::empty()),
+        Operation::InitBase => true
+    }
+{
+    interchange_apply_and_replay(0, pre_linearised_history, Seq::empty(), operation)
 }
 
 pub open spec fn count_pushes_up_to(
@@ -444,6 +504,12 @@ tokenized_state_machine!{
             by {
                 stable_counts(i, pre.linearised_history, post.linearised_history);
             };
+
+            assert(pre.linearised_history.insert(pre.linearised_history.len(), Operation::Push(points_to.value().elem)) == post.linearised_history);
+
+            assert(replay_history(0nat, post.linearised_history, Seq::empty()) == post.current_stack_representation_elements) by {
+                replay_history_lemma(pre.linearised_history, post.linearised_history, Operation::Push(points_to.value().elem));
+            };
         }
 
         #[inductive(pop)]
@@ -487,10 +553,25 @@ tokenized_state_machine!{
             by {
                 stable_counts(i, pre.linearised_history, post.linearised_history);
             };
+
+
+            assert(pre.linearised_history.insert(pre.linearised_history.len(), Operation::Pop(Some(top_points_to.value().elem))) == post.linearised_history);
+
+            assert(replay_history(0nat, post.linearised_history, Seq::empty()) == post.current_stack_representation_elements) by {
+                replay_history_lemma(pre.linearised_history, post.linearised_history, Operation::Pop(Some(top_points_to.value().elem)));
+            };
         }
 
         #[inductive(empty_stack_pop)]
-        fn empty_stack_pop_inductive(pre: Self, post: Self, points_to: PointsTo<StackCell>) { }
+        fn empty_stack_pop_inductive(pre: Self, post: Self, points_to: PointsTo<StackCell>) {
+            assert(replay_history(0nat, pre.linearised_history, Seq::empty()) == pre.current_stack_representation_elements);
+            assert(pre.linearised_history.insert(pre.linearised_history.len(), Operation::Pop(None)) == post.linearised_history);
+
+            assert(replay_history(0nat, post.linearised_history, Seq::empty()) == post.current_stack_representation_elements) by {
+                replay_history_lemma(pre.linearised_history, post.linearised_history, Operation::Pop(None));
+            };
+            // pre_linearised_history.insert(pre_linearised_history.len(), operation) == post_linearised_history
+        }
     }
 }
 

@@ -23,6 +23,21 @@ pub enum Operation {
     Init
 }
 
+// pub open spec fn replay_history(
+//     operation_index: nat,
+//     history: Map<nat, Operation>,
+// ) -> Seq<>
+// decreases history.len() - operation_index
+// {
+//     if operation_index == 0 {
+//         0nat
+//     } else {
+//         let possible_insert = if history[operation_index] == Operation::Insert(insert_value) { 1nat } else { 0nat };
+
+//         possible_insert + count_inserts_up_to((operation_index - 1) as nat, insert_value, history)
+//     }
+// }
+
 tokenized_state_machine!{
     machine {
         fields {
@@ -30,7 +45,10 @@ tokenized_state_machine!{
             pub base_address: usize,
 
             #[sharding(variable)]
-            pub cell_addresses: Set<usize>,
+            pub current_cell_addresses: Seq<usize>,
+
+            #[sharding(variable)]
+            pub all_cell_addresses: Set<usize>,
 
             #[sharding(persistent_map)]
             pub address_permissions_witnesses: Map<usize, PointsTo<StackCell>>,
@@ -50,13 +68,41 @@ tokenized_state_machine!{
         }
 
         #[invariant]
-        pub fn uninitialised_operation_inv(&self) -> bool {
-            self.address_permissions.dom() == self.cell_addresses
+        pub fn current_cell_addresses_is_subset_of_all_cell_addresses_inv(&self) -> bool {
+            &&& self.current_cell_addresses.no_duplicates()
+            &&& self.current_cell_addresses.to_set().subset_of(self.all_cell_addresses)
+        }
+
+        #[invariant]
+        pub fn current_cell_addresses_contains_base_address_inv(&self) -> bool {
+            &&& self.current_cell_addresses.contains(self.base_address)
+            &&& self.current_cell_addresses.first() == self.base_address
+        }
+
+        #[invariant]
+        pub fn current_cell_addresses_point_to_next_correctly_inv(&self) -> bool {
+            forall |addr: usize|
+                #[trigger] self.current_cell_addresses.contains(addr) ==> (
+                    forall |i: int|
+                        (0 < i < self.current_cell_addresses.len() && #[trigger] self.current_cell_addresses[i] == addr) ==> (
+                            self.current_cell_addresses[i-1] == self.address_permissions_witnesses.index(addr).value().next
+                        )
+                )
+        }
+
+        #[invariant]
+        pub fn adress_permissions_domain_is_all_addresses_inv(&self) -> bool {
+            self.address_permissions.dom() == self.all_cell_addresses
         }
 
         #[invariant]
         pub fn witness_equals_storage_inv(&self) -> bool {
             self.address_permissions_witnesses == self.address_permissions
+        }
+
+        #[invariant]
+        pub fn base_witness_always_exists_inv(&self) -> bool {
+            self.address_permissions_witnesses.dom().contains(self.base_address)
         }
 
         #[invariant]
@@ -84,7 +130,8 @@ tokenized_state_machine!{
             initialize(base_permission: PointsTo<StackCell>)
             {
                 init base_address                  = base_permission.addr();
-                init cell_addresses                = Set::empty().insert(base_permission.addr());
+                init current_cell_addresses        = Seq::empty().push(base_permission.addr());
+                init all_cell_addresses            = Set::empty().insert(base_permission.addr());
                 init address_permissions_witnesses = Map::empty().insert(base_permission.addr(), base_permission);
                 init address_permissions           = Map::empty().insert(base_permission.addr(), base_permission);
                 init linearised_history            = Map::empty().insert(0, Operation::Init);
@@ -94,10 +141,14 @@ tokenized_state_machine!{
         transition!{
             push(points_to: PointsTo<StackCell>)
             {
-                require(!pre.cell_addresses.contains(points_to.addr()));
-                require(pre.cell_addresses.contains(points_to.value().next));
 
-                update cell_addresses                    = pre.cell_addresses.insert(points_to.addr());
+                require(!pre.all_cell_addresses.contains(points_to.addr()));
+                require(pre.all_cell_addresses.contains(points_to.value().next));
+
+                require(pre.current_cell_addresses.last() == points_to.value().next);
+
+                update all_cell_addresses                = pre.all_cell_addresses.insert(points_to.addr());
+                update current_cell_addresses            = pre.current_cell_addresses.push(points_to.addr());
                 deposit address_permissions             += [points_to.addr() => points_to];
                 add address_permissions_witnesses (union)= [points_to.addr() => points_to];
 
@@ -107,14 +158,19 @@ tokenized_state_machine!{
         }
 
         transition!{
-            pop(points_to: PointsTo<StackCell>)
+            pop(second_top_points_to: PointsTo<StackCell>, top_points_to: PointsTo<StackCell>)
             {
-                require(points_to.addr() != pre.base_address);
+                require(top_points_to.addr() != pre.base_address);
+                require(pre.current_cell_addresses.len() > 1);
+                require(pre.current_cell_addresses.last() == top_points_to.addr());
+                require(top_points_to.value().next == second_top_points_to.addr());
 
-                have address_permissions_witnesses >= [points_to.addr() => points_to];
+                have address_permissions_witnesses >= [top_points_to.addr() => top_points_to];
 
                 birds_eye let next_operation_index  = pre.linearised_history.dom().len();
-                add linearised_history             += [next_operation_index => Operation::Pop(Some(points_to.value().elem))];
+                add linearised_history             += [next_operation_index => Operation::Pop(Some(top_points_to.value().elem))];
+
+                update current_cell_addresses       = pre.current_cell_addresses.drop_last();
             }
         }
 
@@ -122,6 +178,7 @@ tokenized_state_machine!{
             empty_stack_pop(points_to: PointsTo<StackCell>)
             {
                 require(points_to.addr() == pre.base_address);
+                require(pre.current_cell_addresses.len() == 1);
 
                 have address_permissions_witnesses >= [points_to.addr() => points_to];
 
@@ -138,21 +195,99 @@ tokenized_state_machine!{
         }
 
         property!{
-            have_stack_witness(addr: usize, permission: PointsTo<StackCell>) {
+            have_witness_after_pop(addr: usize, permission: PointsTo<StackCell>) {
                 have address_permissions_witnesses >= [addr => permission];
                 require(addr != pre.base_address);
-                assert(pre.cell_addresses.contains(permission.value().next));
+                assert(pre.all_cell_addresses.contains(permission.value().next));
+            }
+        }
+
+        property!{
+            same_address_implies_same_permission(addr1: usize, permission1: PointsTo<StackCell>, addr2: usize, permission2: PointsTo<StackCell>) {
+                require(addr1 == addr2);
+                have address_permissions_witnesses >= [addr1 => permission1];
+                have address_permissions_witnesses >= [addr2 => permission2];
+                assert(permission1 == permission2);
             }
         }
 
         #[inductive(initialize)]
-        fn initialize_inductive(post: Self, base_permission: PointsTo<StackCell>) { }
+        fn initialize_inductive(post: Self, base_permission: PointsTo<StackCell>) {
+            assert(post.current_cell_addresses.first() == post.base_address);
+        }
 
         #[inductive(push)]
-        fn push_inductive(pre: Self, post: Self, points_to: PointsTo<StackCell>) { }
+        fn push_inductive(pre: Self, post: Self, points_to: PointsTo<StackCell>) {
+            assert(post.current_cell_addresses.first() == post.base_address);
+            assert(post.current_cell_addresses.contains(post.base_address));
+
+            assert(
+                forall |addr: usize|
+                    #[trigger] pre.current_cell_addresses.contains(addr) ==> (
+                        forall |i: int|
+                            (0 < i < pre.current_cell_addresses.len() && #[trigger] pre.current_cell_addresses[i] == addr) ==> (
+                                pre.current_cell_addresses[i-1] == pre.address_permissions_witnesses.index(addr).value().next
+                            )
+                    )
+            );
+
+            assert(pre.current_cell_addresses == post.current_cell_addresses.subrange(0, post.current_cell_addresses.len() - 1));
+
+            assert(
+                forall |addr: usize|
+                    #[trigger] post.current_cell_addresses.subrange(0, post.current_cell_addresses.len() - 1).contains(addr) ==> (
+                        forall |i: int|
+                            (0 < i < post.current_cell_addresses.subrange(0, post.current_cell_addresses.len() - 1).len() && #[trigger] post.current_cell_addresses.subrange(0, post.current_cell_addresses.len() - 1)[i] == addr) ==> (
+                                post.current_cell_addresses.subrange(0, post.current_cell_addresses.len() - 1)[i-1] == post.address_permissions_witnesses.index(addr).value().next
+                            )
+                    )
+            );
+
+            assert(
+                forall |addr: usize|
+                    #[trigger] post.current_cell_addresses.subrange(0, post.current_cell_addresses.len() - 1).contains(addr) ==> (
+                        forall |i: int|
+                            (0 < i < post.current_cell_addresses.len() && #[trigger] post.current_cell_addresses[i] == addr) ==> (
+                                post.current_cell_addresses[i-1] == post.address_permissions_witnesses.index(addr).value().next
+                            )
+                    )
+            );
+
+            assert(pre.current_cell_addresses.push(points_to.addr()) == post.current_cell_addresses);
+            assert(post.address_permissions_witnesses.contains_key(points_to.addr()));
+                        
+            assert(post.current_cell_addresses.last() == (points_to.addr()));
+            assert(post.current_cell_addresses.contains(points_to.addr()));
+
+            assert(
+                forall |addr: usize|
+                    (#[trigger] post.current_cell_addresses.contains(addr) && addr != post.current_cell_addresses.last()) ==>
+                        (post.current_cell_addresses.subrange(0, post.current_cell_addresses.len() - 1).contains(addr))
+            );
+        }
 
         #[inductive(pop)]
-        fn pop_inductive(pre: Self, post: Self, points_to: PointsTo<StackCell>) { }
+        fn pop_inductive(pre: Self, post: Self, second_top_points_to: PointsTo<StackCell>, top_points_to: PointsTo<StackCell>) {
+            assert(pre.current_cell_addresses.first() == post.base_address);
+            assert(post.current_cell_addresses.first() == post.base_address);
+
+            assert(
+                forall |addr: usize|
+                    #[trigger] pre.current_cell_addresses.contains(addr) ==> (
+                        forall |i: int|
+                            (0 < i < pre.current_cell_addresses.drop_last().len() && #[trigger] pre.current_cell_addresses.drop_last()[i] == addr) ==> (
+                                pre.current_cell_addresses.drop_last()[i-1] == pre.address_permissions_witnesses.index(addr).value().next
+                            )
+                    )
+            );
+
+            assert(pre.current_cell_addresses.drop_last() == post.current_cell_addresses);
+            assert(
+                forall |addr: usize|
+                    #[trigger] pre.current_cell_addresses.drop_last().contains(addr) ==>
+                        pre.current_cell_addresses.contains(addr)
+            );
+        }
 
         #[inductive(empty_stack_pop)]
         fn empty_stack_pop_inductive(pre: Self, post: Self, points_to: PointsTo<StackCell>) { }
@@ -161,7 +296,8 @@ tokenized_state_machine!{
 
 pub struct AtomicTokens {
     pub cell_witnesses: Tracked<Map<usize, machine::address_permissions_witnesses>>,
-    pub cell_addresses: Tracked<machine::cell_addresses>
+    pub all_cell_addresses: Tracked<machine::all_cell_addresses>,
+    pub current_cell_addresses: Tracked<machine::current_cell_addresses>,
 }
 
 #[derive(Copy, Clone)]
@@ -183,32 +319,51 @@ struct_with_invariants!{
             &&& base_address == instance.base_address()
 
             // The base address is always present even before the first push:
-            &&& atomic_tokens.cell_addresses.value().contains(base_address)
+            &&& atomic_tokens.cell_witnesses.dom().contains(base_address)
+            &&& atomic_tokens.all_cell_addresses.value().contains(base_address)
+            &&& atomic_tokens.current_cell_addresses.value().contains(base_address)
+            &&& atomic_tokens.current_cell_addresses.value().first() == base_address
 
             // All tokens must come from the correct TSM:
-            &&& atomic_tokens.cell_addresses.instance_id() == instance.id()
-            &&& forall |address: usize| #![auto]
+            &&& atomic_tokens.all_cell_addresses.instance_id() == instance.id()
+            &&& atomic_tokens.current_cell_addresses.instance_id() == instance.id()
+            &&& (forall |address: usize| #![auto]
                     atomic_tokens.cell_witnesses.dom().contains(address) ==>
-                        atomic_tokens.cell_witnesses.index(address).instance_id() == instance.id()
+                        atomic_tokens.cell_witnesses.index(address).instance_id() == instance.id())
             
-            // There is a witness token for the current address:
+            // The top address is always tracked:
             &&& atomic_tokens.cell_witnesses.dom().contains(top_address)
+            &&& atomic_tokens.current_cell_addresses.value().contains(top_address)
+            &&& atomic_tokens.current_cell_addresses.value().last() == top_address
 
             // The set of cell addresses should equal the domain of the witness tokens:
-            &&&  atomic_tokens.cell_addresses.value() == atomic_tokens.cell_witnesses.dom()
+            &&&  atomic_tokens.all_cell_addresses.value() == atomic_tokens.cell_witnesses.dom()
 
             // Every witness token's permission points to initialised memory except for the witness of the base address:
-            &&& forall |address: usize| #![auto]
+            &&& (forall |address: usize| #![auto]
                     atomic_tokens.cell_witnesses.dom().contains(address) ==> (
                         address != base_address <==> atomic_tokens.cell_witnesses.index(address).value().is_init()
-                    )
+                    ))
 
             // Each individual map entry must agree internally at the address it is referencing
-            &&& forall |address: usize| #![auto]
+            &&& (forall |address: usize| #![auto]
                     atomic_tokens.cell_witnesses.dom().contains(address) ==> (
                         atomic_tokens.cell_witnesses.index(address).key() == address &&
                         atomic_tokens.cell_witnesses.index(address).value().addr() == address
+                    ))
+
+            // TESTING:
+            &&& atomic_tokens.current_cell_addresses.value().to_set().subset_of(atomic_tokens.all_cell_addresses.value())
+            &&& atomic_tokens.current_cell_addresses.value().no_duplicates()
+            &&& forall |addr: usize|
+                    #[trigger] atomic_tokens.current_cell_addresses.value().contains(addr) ==> (
+                        forall |i: int|
+                            (0 < i < atomic_tokens.current_cell_addresses.value().len() && #[trigger] atomic_tokens.current_cell_addresses.value()[i] == addr) ==> (
+                                atomic_tokens.current_cell_addresses.value()[i-1] == atomic_tokens.cell_witnesses.index(addr).value().value().next
+                            )
                     )
+            &&& top_address == base_address <==> atomic_tokens.current_cell_addresses.value().len() == 1
+            // &&& atomic_tokens.current_cell_addresses.value().len() == 1 ==> atomic_tokens.current_cell_addresses.value().first() == atomic_tokens.current_cell_addresses.value().last()
         }
     }
 }
@@ -232,7 +387,8 @@ impl TreiberStack {
 
         let tracked (
             Tracked(instance), 
-            Tracked(cell_addresses),
+            Tracked(current_cell_addresses),
+            Tracked(all_cell_addresses),
             Tracked(address_permissions_witnesses),
             Tracked(linearised_history)
         ) = machine::Instance::initialize(base_perm, address_permissions);
@@ -241,8 +397,11 @@ impl TreiberStack {
 
         let atomic_tokens = AtomicTokens {
             cell_witnesses: Tracked(witness_tokens),
-            cell_addresses: Tracked(cell_addresses)
+            all_cell_addresses: Tracked(all_cell_addresses),
+            current_cell_addresses: Tracked(current_cell_addresses)
         };
+
+        assert(current_cell_addresses.value().first() == base_address);
 
         let top_address = AtomicUsize::new(Ghost((base_address, Tracked(instance))), base_address, Tracked(atomic_tokens));
 
@@ -270,6 +429,7 @@ impl TreiberStack {
                     permissioned_stack_cell.read(Tracked(&stack_cell_perm)).next, 
                     permissioned_stack_cell.addr()
                 );
+                update prev -> next;
                 returning previous_head_result;
 
                 ghost points_to_inv => {
@@ -282,11 +442,152 @@ impl TreiberStack {
                             assert(false);
                         }
 
-                        let tracked tuple = self.instance.push(stack_cell_perm, &mut points_to_inv.cell_addresses, stack_cell_perm);
+                        assert(points_to_inv.current_cell_addresses.value().first() == self.base_address);
+
+                        assert(
+                            forall |addr: usize|
+                                #[trigger] points_to_inv.current_cell_addresses.value().contains(addr) ==> (
+                                    forall |i: int|
+                                        (0 < i < points_to_inv.current_cell_addresses.value().len() && #[trigger] points_to_inv.current_cell_addresses.value()[i] == addr) ==> (
+                                            points_to_inv.current_cell_addresses.value()[i-1] == points_to_inv.cell_witnesses.index(addr).value().value().next
+                                        )
+                                )
+                        );
+
+                        let ghost pre_current_cell_addresses = Ghost(points_to_inv.current_cell_addresses@.value());
+
+                        let tracked tuple = self.instance.push(stack_cell_perm, &mut points_to_inv.current_cell_addresses, &mut points_to_inv.all_cell_addresses, stack_cell_perm);
+
+                        assert(points_to_inv.current_cell_addresses.value().first() == self.instance.base_address());
+                        assert(points_to_inv.current_cell_addresses.value().last() == next);
+
                         let tracked witness_token = tuple.0.get();
                         push_witness = Some(tuple.2.get());
 
+
+                        assert(points_to_inv.current_cell_addresses.value() == pre_current_cell_addresses.push(witness_token.value().addr()));
+                        assert(points_to_inv.current_cell_addresses.value().drop_last() == pre_current_cell_addresses.push(witness_token.value().addr()).drop_last());
+                        assert(pre_current_cell_addresses@ =~= pre_current_cell_addresses.push(witness_token.value().addr()).drop_last());
+                        assert(points_to_inv.current_cell_addresses.value().drop_last() == pre_current_cell_addresses);
+
+                        assert(
+                            forall |addr: usize|
+                                #[trigger] pre_current_cell_addresses.contains(addr) ==> (
+                                    forall |i: int|
+                                        (0 < i < pre_current_cell_addresses.len() && #[trigger] pre_current_cell_addresses[i] == addr) ==> (
+                                            pre_current_cell_addresses[i-1] == points_to_inv.cell_witnesses.index(addr).value().value().next
+                                        )
+                                )
+                        );
+
+                        assert(points_to_inv.current_cell_addresses.value().last() == witness_token.key());
+                        assert(points_to_inv.current_cell_addresses.value()[points_to_inv.current_cell_addresses.value().len() - 2] == witness_token.value().value().next);
+
                         points_to_inv.cell_witnesses.tracked_insert(witness_token.key(), witness_token);
+
+                        assert(points_to_inv.current_cell_addresses.value() == pre_current_cell_addresses.push(witness_token.value().addr()));
+
+                        assert(
+                            forall |addr: usize|
+                                #[trigger] pre_current_cell_addresses.contains(addr) ==> (
+                                    forall |i: int|
+                                        (0 < i < pre_current_cell_addresses.len() && #[trigger] pre_current_cell_addresses[i] == addr) ==> (
+                                            pre_current_cell_addresses[i-1] == points_to_inv.cell_witnesses.index(addr).value().value().next
+                                        )
+                                )
+                        );
+
+                        assert(
+                            forall |addr: usize|
+                                #[trigger] pre_current_cell_addresses.contains(addr) ==> (
+                                    forall |i: int|
+                                        (0 < i < pre_current_cell_addresses.len() - 1 && #[trigger] pre_current_cell_addresses[i] == addr) ==> (
+                                            pre_current_cell_addresses[i-1] == points_to_inv.cell_witnesses.index(addr).value().value().next
+                                        )
+                                )
+                        );
+
+                        assert(
+                            forall |addr: usize|
+                                #[trigger] points_to_inv.current_cell_addresses.value().subrange(0, points_to_inv.current_cell_addresses.value().len() - 1).contains(addr) ==>
+                                    pre_current_cell_addresses.contains(addr)
+                        );
+
+                        assert(pre_current_cell_addresses.push(witness_token.value().addr()) == points_to_inv.current_cell_addresses.value());
+                        assert(pre_current_cell_addresses == points_to_inv.current_cell_addresses.value().subrange(0, points_to_inv.current_cell_addresses.value().len() - 1));
+
+                        assert(
+                            forall |addr: usize|
+                                #[trigger] points_to_inv.current_cell_addresses.value().subrange(0, points_to_inv.current_cell_addresses.value().len() - 1).contains(addr) ==> (
+                                    forall |i: int|
+                                        (0 < i < points_to_inv.current_cell_addresses.value().subrange(0, points_to_inv.current_cell_addresses.value().len() - 1).len() - 1 && #[trigger] points_to_inv.current_cell_addresses.value().subrange(0, pre_current_cell_addresses.len() - 1)[i] == addr) ==> (
+                                            points_to_inv.current_cell_addresses.value().subrange(0, points_to_inv.current_cell_addresses.value().len() - 1)[i-1] == points_to_inv.cell_witnesses.index(addr).value().value().next
+                                        )
+                                )
+                        );
+
+                        assert(points_to_inv.cell_witnesses.contains_key(witness_token.key()));
+                        // assert(points_to_inv.current_cell_addresses.value().subrange(0, pre_current_cell_addresses.len() - 1).push(witness_token.key()) =~= points_to_inv.current_cell_addresses.value());
+
+                        assert(points_to_inv.current_cell_addresses.value().last() == witness_token.key());
+                        assert(points_to_inv.current_cell_addresses.value().contains(witness_token.key()));
+
+                        assert(
+                            forall |i: int|
+                                (0 < i < points_to_inv.current_cell_addresses.value().len() - 1 && #[trigger] points_to_inv.current_cell_addresses.value()[i] == witness_token.key()) ==> (
+                                    points_to_inv.current_cell_addresses.value()[i-1] == points_to_inv.cell_witnesses.index(witness_token.key()).value().value().next
+                                )
+                        );
+
+                        assert(
+                            forall |addr: usize|
+                                #[trigger] points_to_inv.current_cell_addresses.value().subrange(0, points_to_inv.current_cell_addresses.value().len() - 1).contains(addr) ==> (
+                                    forall |i: int|
+                                        (0 < i < points_to_inv.current_cell_addresses.value().len() - 1 && #[trigger] points_to_inv.current_cell_addresses.value()[i] == addr) ==> (
+                                            points_to_inv.current_cell_addresses.value()[i-1] == points_to_inv.cell_witnesses.index(addr).value().value().next
+                                        )
+                                )
+                        );
+
+                        assert(
+                            forall |addr: usize|
+                                (#[trigger] points_to_inv.current_cell_addresses.value().contains(addr) && addr != points_to_inv.current_cell_addresses.value().last()) ==>
+                                    (points_to_inv.current_cell_addresses.value().subrange(0, points_to_inv.current_cell_addresses.value().len() - 1).contains(addr))
+                        );
+
+                        // assert(points_to_inv.current_cell_addresses.value().len() > 1);
+
+                        // assert(points_to_inv.current_cell_addresses.value()[points_to_inv.current_cell_addresses.value().len() - 1] == witness_token.key());
+                        // assert(points_to_inv.current_cell_addresses.value()[points_to_inv.current_cell_addresses.value().len() - 2] == points_to_inv.cell_witnesses.index(witness_token.key()).value().value().next);
+
+                        // // assert(pre_current_cell_addresses@.drop_last() == post_current_cell_addresses.value());
+
+                        // assert(points_to_inv.current_cell_addresses.value().last() == witness_token.key());
+
+                        // assert(points_to_inv.current_cell_addresses.value().first() == self.base_address);
+
+                        // assert(
+                        //     forall |addr: usize|
+                        //         #[trigger] points_to_inv.current_cell_addresses.value().contains(addr) ==> (
+                        //             forall |i: int|
+                        //                 (0 < i < points_to_inv.current_cell_addresses.value().len() && #[trigger] points_to_inv.current_cell_addresses.value()[i] == addr) ==> (
+                        //                     points_to_inv.current_cell_addresses.value()[i-1] == points_to_inv.cell_witnesses.index(addr).value().value().next
+                        //                 )
+                        //         )
+                        // );
+
+
+
+
+                        // assert(
+                        //     forall |addr: usize|
+                        //         #[trigger] points_to_inv.current_cell_addresses.value().contains(addr) ==> (
+                        //             forall |i: int|
+                        //                 (0 < i < points_to_inv.current_cell_addresses.value().len() && #[trigger] points_to_inv.current_cell_addresses.value()[i] == addr) ==> (
+                        //                     points_to_inv.current_cell_addresses.value()[i-1] == points_to_inv.cell_witnesses.index(addr).value().value().next
+                        //                 )
+                        //         )
+                        // );
                     }
                 }
             );
@@ -308,7 +609,7 @@ impl TreiberStack {
             invariant
                 self.wf()
         {
-            let tracked witness_token;
+            let tracked head_witness_token;
             let tracked token_ref;
             let tracked pop_witness = None;
 
@@ -317,9 +618,10 @@ impl TreiberStack {
                 returning addr;
 
                 ghost points_to_inv => {
-                    witness_token = points_to_inv.cell_witnesses.tracked_borrow(addr).clone();
+                    head_witness_token = points_to_inv.cell_witnesses.tracked_remove(addr);
+                    points_to_inv.cell_witnesses.tracked_insert(addr, head_witness_token.clone());
                     if addr == self.base_address {
-                        pop_witness = Some(self.instance.empty_stack_pop(witness_token.value(), &witness_token).1.get());
+                        pop_witness = Some(self.instance.empty_stack_pop(head_witness_token.value(), &mut points_to_inv.current_cell_addresses, &head_witness_token).1.get());
                     }
                 }
             };
@@ -329,7 +631,7 @@ impl TreiberStack {
             }
 
             proof {
-                token_ref = self.instance.get_permission_reference(witness_token.key(), witness_token.value(), &witness_token);
+                token_ref = self.instance.get_permission_reference(head_witness_token.key(), head_witness_token.value(), &head_witness_token);
             }
 
             let permissioned_pointer = PPtr::<StackCell>::from_addr(head_stack_cell_address);
@@ -345,8 +647,122 @@ impl TreiberStack {
 
                 ghost points_to_inv => {
                     if let Ok(_) = possible_new_head_address {
-                        self.instance.have_stack_witness(witness_token.key(), witness_token.value(), &points_to_inv.cell_addresses, &witness_token);
-                        pop_witness = Some(self.instance.pop(witness_token.value(), &witness_token).1.get());
+                        assert(head_witness_token.value().value().next == new_head_address);
+
+                        self.instance.have_witness_after_pop(head_witness_token.key(), head_witness_token.value(), &points_to_inv.all_cell_addresses, &head_witness_token);
+
+                        let tracked new_top_witness = points_to_inv.cell_witnesses.tracked_borrow(new_head_address); 
+
+                        assert(
+                            forall |addr: usize|
+                                #[trigger] points_to_inv.current_cell_addresses.value().contains(addr) ==> (
+                                    forall |i: int|
+                                        (0 < i < points_to_inv.current_cell_addresses.value().len() && #[trigger] points_to_inv.current_cell_addresses.value()[i] == addr) ==> (
+                                            points_to_inv.current_cell_addresses.value()[i-1] == points_to_inv.cell_witnesses.index(addr).value().value().next
+                                        )
+                                )
+                        );
+
+                        assert(points_to_inv.current_cell_addresses.value().last() == current_head_address);
+                        assert(head_witness_token.value().addr() == current_head_address);
+                        assert(head_witness_token.value().value().next == new_top_witness.value().addr());
+
+                        assert(points_to_inv.current_cell_addresses.value()[points_to_inv.current_cell_addresses.value().len() - 1] == current_head_address);
+                        assert(points_to_inv.current_cell_addresses.value()[points_to_inv.current_cell_addresses.value().len() - 2] == points_to_inv.cell_witnesses.index(current_head_address).value().value().next);
+
+                        assert(head_witness_token.value().addr() == current_head_address);
+                        assert(head_witness_token.key() == current_head_address);
+                        assert(points_to_inv.cell_witnesses.dom().contains(current_head_address));
+
+                        // Proving that the head_witness_token is still in the map:
+                        let tracked possible_other_perm = points_to_inv.cell_witnesses.tracked_borrow(current_head_address);
+
+                        self.instance.same_address_implies_same_permission(head_witness_token.key(), head_witness_token.value(), possible_other_perm.key(), possible_other_perm.value(), &head_witness_token, &possible_other_perm);
+                        assert(possible_other_perm.value() == head_witness_token.value());
+
+                        assert(head_witness_token.value().value().next == new_head_address);
+
+                        assert(
+                            forall |addr: usize|
+                                #[trigger] points_to_inv.current_cell_addresses.value().contains(addr) ==> (
+                                    forall |i: int|
+                                        (0 < i < points_to_inv.current_cell_addresses.value().len() && #[trigger] points_to_inv.current_cell_addresses.value()[i] == addr) ==> (
+                                            points_to_inv.current_cell_addresses.value()[i-1] == points_to_inv.cell_witnesses.index(addr).value().value().next
+                                        )
+                                )
+                        );
+
+                        let ghost pre_current_cell_addresses = Ghost(points_to_inv.current_cell_addresses@.value());
+
+                        assert(
+                            forall |addr: usize|
+                                #[trigger] pre_current_cell_addresses.contains(addr) ==> (
+                                    forall |i: int|
+                                        (0 < i < pre_current_cell_addresses.len() && #[trigger] pre_current_cell_addresses[i] == addr) ==> (
+                                            pre_current_cell_addresses[i-1] == points_to_inv.cell_witnesses.index(addr).value().value().next
+                                        )
+                                )
+                        );
+
+                        // assert(
+                        //     forall |addr: usize|
+                        //         #[trigger] pre_current_cell_addresses.contains(addr) ==> (
+                        //             forall |i: int|
+                        //                 (0 < i < pre_current_cell_addresses.len() - 1 && #[trigger] pre_current_cell_addresses[i] == addr) ==> (
+                        //                     pre_current_cell_addresses[i-1] == points_to_inv.cell_witnesses.index(addr).value().value().next
+                        //                 )
+                        //         )
+                        // );
+
+                        let ghost post_current_cell_addresses = Ghost(points_to_inv.current_cell_addresses@.value().drop_last());
+                        assert(post_current_cell_addresses == pre_current_cell_addresses.subrange(0, pre_current_cell_addresses.len() - 1));
+
+                        assert(
+                            forall |addr: usize|
+                                #[trigger] pre_current_cell_addresses.contains(addr) ==> (
+                                    forall |i: int|
+                                        (0 < i < pre_current_cell_addresses.subrange(0, pre_current_cell_addresses.len() - 1).len() && #[trigger] pre_current_cell_addresses.subrange(0, pre_current_cell_addresses.len() - 1)[i] == addr) ==> (
+                                            pre_current_cell_addresses.subrange(0, pre_current_cell_addresses.len() - 1)[i-1] == points_to_inv.cell_witnesses.index(addr).value().value().next
+                                        )
+                                )
+                        );
+
+                        assert(
+                            forall |addr: usize|
+                                #[trigger] pre_current_cell_addresses.subrange(0, pre_current_cell_addresses.len() - 1).contains(addr) ==>
+                                pre_current_cell_addresses.contains(addr)
+                            );
+
+                        assert(
+                            forall |addr: usize|
+                                #[trigger] pre_current_cell_addresses.subrange(0, pre_current_cell_addresses.len() - 1).contains(addr) ==> (
+                                    forall |i: int|
+                                        (0 < i < pre_current_cell_addresses.subrange(0, pre_current_cell_addresses.len() - 1).len() && #[trigger] pre_current_cell_addresses.subrange(0, pre_current_cell_addresses.len() - 1)[i] == addr) ==> (
+                                            pre_current_cell_addresses.subrange(0, pre_current_cell_addresses.len() - 1)[i-1] == points_to_inv.cell_witnesses.index(addr).value().value().next
+                                        )
+                                )
+                        );
+
+                        pop_witness = Some(self.instance.pop(new_top_witness.value(), head_witness_token.value(), &mut points_to_inv.current_cell_addresses, &head_witness_token).1.get());
+                        
+                        let ghost post_current_cell_addresses = Ghost(points_to_inv.current_cell_addresses);
+
+                        assert(pre_current_cell_addresses@.drop_last() == post_current_cell_addresses.value());
+
+                        assert(points_to_inv.current_cell_addresses.value().last() == new_head_address);
+
+                        assert(points_to_inv.current_cell_addresses.value().first() == self.base_address);
+
+                        assert(
+                            forall |addr: usize|
+                                #[trigger] points_to_inv.current_cell_addresses.value().contains(addr) ==> (
+                                    forall |i: int|
+                                        (0 < i < points_to_inv.current_cell_addresses.value().len() && #[trigger] points_to_inv.current_cell_addresses.value()[i] == addr) ==> (
+                                            points_to_inv.current_cell_addresses.value()[i-1] == points_to_inv.cell_witnesses.index(addr).value().value().next
+                                        )
+                                )
+                        );
+                        
                     }
                 }
             };

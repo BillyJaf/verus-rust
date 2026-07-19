@@ -20,7 +20,12 @@ global layout StackCell is size == 16;
 pub enum Operation {
     Pop(Option<u32>),
     Push(u32),
-    Init
+    InitBase
+}
+
+pub enum CellRepresentation {
+    Elem(u32),
+    Base
 }
 
 
@@ -40,6 +45,9 @@ tokenized_state_machine!{
 
             #[sharding(variable)]
             pub current_stack_representation_addresses: Seq<usize>,
+
+            #[sharding(variable)]
+            pub current_stack_representation_elements: Seq<CellRepresentation>,
 
             #[sharding(variable)]
             pub popped_cells: Set<usize>,
@@ -66,6 +74,17 @@ tokenized_state_machine!{
         #[invariant]
         pub fn current_stack_representation_addresses_no_duplicates_inv(&self) -> bool {
             self.current_stack_representation_addresses.no_duplicates()
+        }
+
+        #[invariant]
+        pub fn current_stack_representation_addresses_reflects_current_stack_representation_elements_inv(&self) -> bool {
+            &&& self.current_stack_representation_addresses.len() == self.current_stack_representation_elements.len()
+            &&& self.all_permission_witnesses.index(self.current_stack_representation_addresses.first()).is_uninit()
+            &&& forall |i: int| #![auto]
+                    0 < i < self.current_stack_representation_addresses.len() ==> (
+                        self.all_permission_witnesses.dom().contains(self.current_stack_representation_addresses[i]) &&
+                        CellRepresentation::Elem(self.all_permission_witnesses.index(self.current_stack_representation_addresses[i]).value().elem) == self.current_stack_representation_elements[i]
+                    )
         }
 
         #[invariant]
@@ -125,18 +144,29 @@ tokenized_state_machine!{
         }
 
         #[invariant]
-        pub fn stack_has_valid_witnesses(&self) -> bool {
+        pub fn stack_has_valid_witnesses_one(&self) -> bool {
             forall |addr: usize| #![auto]
                 (self.all_permission_witnesses.dom().contains(addr) && addr != self.base_address) ==>
                     self.all_permission_witnesses.dom().contains(self.all_permission_witnesses.index(addr).value().next)
         }
 
+        #[invariant]
+        pub fn stack_has_valid_witnesses_two(&self) -> bool {
+            forall |addr: usize| #![auto]
+                self.all_permission_witnesses.dom().contains(addr) ==> (
+                    addr != self.base_address <==> self.all_permission_witnesses.index(addr).is_init()
+                )
+                    
+        }
+
         init!{
             initialize(base_permission: PointsTo<StackCell>)
             {
+                require(base_permission.is_uninit());
                 init base_address                  = base_permission.addr();
-                init linearised_history            = Map::empty().insert(0, Operation::Init);
+                init linearised_history            = Map::empty().insert(0, Operation::InitBase);
                 init current_stack_representation_addresses  = Seq::empty().push(base_permission.addr());
+                init current_stack_representation_elements = Seq::empty().push(CellRepresentation::Base);
                 init popped_cells                  = Set::empty();
                 init all_cell_addresses            = Set::empty().insert(base_permission.addr());
                 init all_permission_witnesses      = Map::empty().insert(base_permission.addr(), base_permission);
@@ -147,6 +177,8 @@ tokenized_state_machine!{
         transition!{
             push(points_to: PointsTo<StackCell>)
             {
+                require(points_to.is_init());
+
                 require(!pre.all_cell_addresses.contains(points_to.addr()));
                 require(pre.all_cell_addresses.contains(points_to.value().next));
 
@@ -154,6 +186,7 @@ tokenized_state_machine!{
 
                 update all_cell_addresses                = pre.all_cell_addresses.insert(points_to.addr());
                 update current_stack_representation_addresses      = pre.current_stack_representation_addresses.push(points_to.addr());
+                update current_stack_representation_elements      = pre.current_stack_representation_elements.push(CellRepresentation::Elem(points_to.value().elem));
                 deposit all_address_permissions             += [points_to.addr() => points_to];
                 add all_permission_witnesses (union)= [points_to.addr() => points_to];
 
@@ -177,6 +210,7 @@ tokenized_state_machine!{
 
                 update popped_cells = pre.popped_cells.insert(pre.current_stack_representation_addresses.last());
                 update current_stack_representation_addresses       = pre.current_stack_representation_addresses.drop_last();
+                update current_stack_representation_elements      = pre.current_stack_representation_elements.drop_last();
             }
         }
 
@@ -221,6 +255,7 @@ tokenized_state_machine!{
         fn initialize_inductive(post: Self, base_permission: PointsTo<StackCell>) {
             assert(post.current_stack_representation_addresses.first() == post.base_address);
             assert(post.current_stack_representation_addresses.to_set().union(post.popped_cells) == post.all_cell_addresses);
+            assert(post.all_permission_witnesses.index(post.base_address).is_uninit());
         }
 
         #[inductive(push)]
@@ -317,6 +352,7 @@ tokenized_state_machine!{
 
 pub struct AtomicTokens {
     pub current_stack_representation_addresses: Tracked<machine::current_stack_representation_addresses>,
+    pub current_stack_representation_elements: Tracked<machine::current_stack_representation_elements>,
     pub popped_cells: Tracked<machine::popped_cells>,
     pub cell_witnesses: Tracked<Map<usize, machine::all_permission_witnesses>>,
     pub all_cell_addresses: Tracked<machine::all_cell_addresses>,
@@ -349,6 +385,7 @@ struct_with_invariants!{
             // All tokens must come from the correct TSM:
             &&& atomic_tokens.current_stack_representation_addresses.instance_id() == instance.id()
             &&& atomic_tokens.popped_cells.instance_id() == instance.id()
+            &&& atomic_tokens.current_stack_representation_elements.instance_id() == instance.id()
             &&& atomic_tokens.all_cell_addresses.instance_id() == instance.id()
             &&& (forall |address: usize| #![auto]
                     atomic_tokens.cell_witnesses.dom().contains(address) ==>
@@ -412,6 +449,7 @@ impl TreiberStack {
             Tracked(instance), 
             Tracked(linearised_history),
             Tracked(current_stack_representation_addresses),
+            Tracked(current_stack_representation_elements),
             Tracked(popped_cells),
             Tracked(all_cell_addresses),
             Tracked(all_permission_witnesses),
@@ -421,6 +459,7 @@ impl TreiberStack {
 
         let atomic_tokens = AtomicTokens {
             current_stack_representation_addresses: Tracked(current_stack_representation_addresses),
+            current_stack_representation_elements: Tracked(current_stack_representation_elements),
             popped_cells: Tracked(popped_cells),
             cell_witnesses: Tracked(witness_tokens),
             all_cell_addresses: Tracked(all_cell_addresses),
@@ -481,7 +520,7 @@ impl TreiberStack {
 
                         let ghost pre_current_stack_representation_addresses = Ghost(points_to_inv.current_stack_representation_addresses@.value());
 
-                        let tracked tuple = self.instance.push(stack_cell_perm, &mut points_to_inv.current_stack_representation_addresses, &mut points_to_inv.all_cell_addresses, stack_cell_perm);
+                        let tracked tuple = self.instance.push(stack_cell_perm, &mut points_to_inv.current_stack_representation_addresses, &mut points_to_inv.current_stack_representation_elements, &mut points_to_inv.all_cell_addresses, stack_cell_perm);
 
                         assert(points_to_inv.current_stack_representation_addresses.value().first() == self.instance.base_address());
                         assert(points_to_inv.current_stack_representation_addresses.value().last() == next);
@@ -769,7 +808,7 @@ impl TreiberStack {
                                 )
                         );
 
-                        pop_witness = Some(self.instance.pop(new_top_witness.value(), head_witness_token.value(), &mut points_to_inv.current_stack_representation_addresses, &mut points_to_inv.popped_cells, &head_witness_token).1.get());
+                        pop_witness = Some(self.instance.pop(new_top_witness.value(), head_witness_token.value(), &mut points_to_inv.current_stack_representation_addresses, &mut points_to_inv.current_stack_representation_elements, &mut points_to_inv.popped_cells, &head_witness_token).1.get());
                         
                         let ghost post_current_stack_representation_addresses = Ghost(points_to_inv.current_stack_representation_addresses);
 

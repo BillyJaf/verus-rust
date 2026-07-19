@@ -23,12 +23,119 @@ pub enum Operation {
     InitBase
 }
 
+impl Operation {
+    pub fn get_push(&self) -> (value: u32) 
+        requires
+            match self {
+                Operation::Push(_) => true,
+                _ => false
+            }
+        ensures
+            *self == Operation::Push(value)
+    {
+        match self {
+            Operation::Push(i) => *i,
+            _ => 0
+        }
+    }
+
+    pub fn get_pop(&self) -> (value: Option<u32>) 
+        requires
+            match self {
+                Operation::Pop(_) => true,
+                _ => false
+            }
+        ensures
+            *self == Operation::Pop(value)
+    {
+        match self {
+            Operation::Pop(i) => *i,
+            _ => None
+        }
+    }
+
+    pub open spec fn is_empty_pop(&self) -> bool
+    {
+        match self {
+                Operation::Pop(None) => true,
+                _ => false
+            }
+    }
+}
+
 pub enum CellRepresentation {
     Elem(u32),
     Base
 }
 
+pub open spec fn replay_history(
+    operation_index: nat,
+    linearised_history: Map<nat, Operation>,
+    current_stack: Seq<CellRepresentation>
+) -> Seq<CellRepresentation>
+decreases linearised_history.len() - operation_index
+{
+    if operation_index >= linearised_history.len() {
+        current_stack
+    } else {
+        match linearised_history[operation_index] {
+            Operation::InitBase => replay_history((operation_index + 1) as nat, linearised_history, current_stack.push(CellRepresentation::Base)),
+            Operation::Push(elem) => replay_history((operation_index + 1) as nat, linearised_history, current_stack.push(CellRepresentation::Elem(elem))),
+            Operation::Pop(Some(_)) => replay_history((operation_index + 1) as nat, linearised_history, current_stack.drop_last()),
+            Operation::Pop(None) => replay_history((operation_index + 1) as nat, linearised_history, current_stack)
+        }
+    }
+}
 
+pub open spec fn count_pushes_up_to(
+    operation_index: nat,
+    linearised_history: Map<nat, Operation>,
+) -> nat
+decreases operation_index
+{
+    if operation_index == 0 {
+        0nat
+    } else {
+        let possible_push = if let Operation::Push(_) = linearised_history[operation_index] { 1nat } else { 0nat };
+
+        possible_push + count_pushes_up_to((operation_index - 1) as nat, linearised_history)
+    }
+}
+
+pub open spec fn count_successful_pops_up_to(
+    operation_index: nat,
+    linearised_history: Map<nat, Operation>,
+) -> nat
+decreases operation_index
+{
+    if operation_index == 0 {
+        0nat
+    } else {
+        let possible_push = if let Operation::Pop(Some(_)) = linearised_history[operation_index] { 1nat } else { 0nat };
+
+        possible_push + count_pushes_up_to((operation_index - 1) as nat, linearised_history)
+    }
+}
+
+pub proof fn stable_counts(
+    up_to_index: nat,
+    pre_linearised_history: Map<nat, Operation>,
+    post_linearised_history: Map<nat, Operation>,
+)
+requires
+    up_to_index < pre_linearised_history.dom().len(),
+    pre_linearised_history =~= post_linearised_history.remove(pre_linearised_history.len()),
+ensures
+    count_pushes_up_to(up_to_index, pre_linearised_history) == count_pushes_up_to(up_to_index, post_linearised_history),
+    count_successful_pops_up_to(up_to_index, pre_linearised_history) == count_successful_pops_up_to(up_to_index, post_linearised_history)
+decreases
+    up_to_index
+{
+    if up_to_index == 0 {}
+    else {
+        stable_counts((up_to_index - 1) as nat, pre_linearised_history, post_linearised_history);
+    }
+}
 
 tokenized_state_machine!{
     machine {
@@ -79,7 +186,8 @@ tokenized_state_machine!{
         #[invariant]
         pub fn current_stack_representation_addresses_reflects_current_stack_representation_elements_inv(&self) -> bool {
             &&& self.current_stack_representation_addresses.len() == self.current_stack_representation_elements.len()
-            &&& self.all_permission_witnesses.index(self.current_stack_representation_addresses.first()).is_uninit()
+            &&& self.current_stack_representation_addresses.first() == self.base_address
+            &&& self.current_stack_representation_elements[0] == CellRepresentation::Base
             &&& forall |i: int| #![auto]
                     0 < i < self.current_stack_representation_addresses.len() ==> (
                         self.all_permission_witnesses.dom().contains(self.current_stack_representation_addresses[i]) &&
@@ -155,8 +263,20 @@ tokenized_state_machine!{
             forall |addr: usize| #![auto]
                 self.all_permission_witnesses.dom().contains(addr) ==> (
                     addr != self.base_address <==> self.all_permission_witnesses.index(addr).is_init()
+                )       
+        }
+
+        #[invariant]
+        pub fn empty_pop_implies_empty_stack(&self) -> bool {
+            forall |i: nat| #![auto]
+                (i < self.linearised_history.len() && self.linearised_history[i].is_empty_pop()) ==> (
+                    count_pushes_up_to(i, self.linearised_history) == count_successful_pops_up_to(i, self.linearised_history)
                 )
-                    
+        }
+
+        #[invariant]
+        pub fn linearised_history_reflects_stack(&self) -> bool {
+            replay_history(0nat, self.linearised_history, Seq::empty()) == self.current_stack_representation_elements
         }
 
         init!{
@@ -256,6 +376,10 @@ tokenized_state_machine!{
             assert(post.current_stack_representation_addresses.first() == post.base_address);
             assert(post.current_stack_representation_addresses.to_set().union(post.popped_cells) == post.all_cell_addresses);
             assert(post.all_permission_witnesses.index(post.base_address).is_uninit());
+
+            reveal_with_fuel(replay_history, 2);
+            assert(replay_history(0nat, post.linearised_history, Seq::empty()) == Seq::empty().push(CellRepresentation::Base));
+            assert(replay_history(0nat, post.linearised_history, Seq::empty()) == post.current_stack_representation_elements);
         }
 
         #[inductive(push)]
@@ -310,6 +434,16 @@ tokenized_state_machine!{
 
             assert(pre.current_stack_representation_addresses.to_set().union(pre.popped_cells) == pre.all_cell_addresses);
             assert(post.current_stack_representation_addresses.to_set().union(post.popped_cells) == post.all_cell_addresses);
+
+            assert
+                forall |i: nat| #![auto] 
+                    i < pre.linearised_history.len()
+                implies
+                    count_pushes_up_to(i, pre.linearised_history) == count_pushes_up_to(i, post.linearised_history) &&
+                    count_successful_pops_up_to(i, pre.linearised_history) == count_successful_pops_up_to(i, post.linearised_history)
+            by {
+                stable_counts(i, pre.linearised_history, post.linearised_history);
+            };
         }
 
         #[inductive(pop)]
@@ -343,6 +477,16 @@ tokenized_state_machine!{
             pre.current_stack_representation_addresses.lemma_add_last_back();
 
             assert(post.current_stack_representation_addresses.to_set().union(post.popped_cells) == post.all_cell_addresses);
+
+            assert
+                forall |i: nat| #![auto] 
+                    i < pre.linearised_history.len()
+                implies
+                    count_pushes_up_to(i, pre.linearised_history) == count_pushes_up_to(i, post.linearised_history) &&
+                    count_successful_pops_up_to(i, pre.linearised_history) == count_successful_pops_up_to(i, post.linearised_history)
+            by {
+                stable_counts(i, pre.linearised_history, post.linearised_history);
+            };
         }
 
         #[inductive(empty_stack_pop)]

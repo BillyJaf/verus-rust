@@ -4,8 +4,9 @@ use verus_builtin::*;
 use verus_builtin_macros::*;
 use verus_state_machines_macros::tokenized_state_machine;
 use vstd::{
-    atomic::*, atomic_ghost::*, map_lib::*, modes::*, pervasive::*, prelude::*, seq_lib::*,
-    set_lib::*, simple_pptr::*,
+    atomic_ghost::*, 
+    prelude::*, 
+    simple_pptr::*,
 };
 
 verus! {
@@ -669,8 +670,6 @@ impl TreiberStack {
             invariant
                 self.wf(),
         {
-            broadcast use group_seq_properties;
-
             let new_stack_cell = StackCell { elem, next: self.head_stack_cell_address.load() };
             let (permission_guarded_new_stack_cell, Tracked(new_stack_cell_permission)) = PPtr::new(
                 new_stack_cell,

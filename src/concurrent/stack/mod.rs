@@ -1,2 +1,2 @@
 #[verifier::verify]
-pub mod stack_seq_rewrite;
+pub mod stack;

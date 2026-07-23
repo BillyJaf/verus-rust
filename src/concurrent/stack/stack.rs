@@ -885,8 +885,4 @@ impl TreiberStack {
         }
     }
 }
-
-fn main() {
-}
-
 } // verus!

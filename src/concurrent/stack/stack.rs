@@ -6,6 +6,7 @@ use verus_state_machines_macros::tokenized_state_machine;
 use vstd::{
     atomic_ghost::*, 
     prelude::*, 
+    pervasive::*,
     simple_pptr::*,
 };
 
@@ -614,7 +615,7 @@ pub struct PoppedElemAndWitness {
 }
 
 impl TreiberStack {
-    fn new() -> (treiber_stack: Self)
+    pub fn new() -> (treiber_stack: Self)
         ensures
             treiber_stack.wf(),
     {
@@ -657,7 +658,7 @@ impl TreiberStack {
         TreiberStack { base_address, head_stack_cell_address, instance: Tracked(instance) }
     }
 
-    pub fn push(self: Arc<Self>, elem: u32) -> (linearised_push_witness: Tracked<
+    pub fn push(&self, elem: u32) -> (linearised_push_witness: Tracked<
         machine::linearised_history,
     >)
         requires
@@ -759,7 +760,7 @@ impl TreiberStack {
         }
     }
 
-    pub fn pop(self: Arc<Self>) -> (popped_elem_and_witness: PoppedElemAndWitness)
+    pub fn pop(&self) -> (popped_elem_and_witness: PoppedElemAndWitness)
         requires
             self.wf(),
         ensures

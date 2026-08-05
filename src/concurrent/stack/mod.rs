@@ -1,2 +1,3 @@
 #[verifier::verify]
-pub mod stack_user_function;
+pub mod stack;
+pub mod stack_tests;

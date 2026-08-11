@@ -44,64 +44,113 @@ tokenized_state_machine!{
             #[sharding(constant)]
             pub base_address: StackCellAddress,
 
+            // Stack Representation
+
+            #[sharding(variable)]
+            pub current_stack_cell_addresses: Seq<StackCellAddress>,
+
+            #[sharding(variable)]
+            pub popped_stack_cell_addresses: Set<StackCellAddress>,
+
             // Witnesses and Permissions
 
             #[sharding(variable)]
-            pub addresses: Set<StackCellAddress>,
+            pub all_stack_cell_addresses: Set<StackCellAddress>,
 
             #[sharding(persistent_map)]
-            pub witnesses: Map<StackCellAddress, PointsTo<StackCell>>,
+            pub all_stack_cell_permissions_witnesses: Map<StackCellAddress, PointsTo<StackCell>>,
 
             #[sharding(storage_map)]
-            pub permissions: Map<StackCellAddress, PointsTo<StackCell>>,
+            pub all_stack_cell_address_permissions: Map<StackCellAddress, PointsTo<StackCell>>,
+        }
+
+        // Current Stack Representation Invariants
+
+        #[invariant]
+        pub fn current_stack_cell_addresses_no_duplicates_inv(&self) -> bool {
+            self.current_stack_cell_addresses.no_duplicates()
+        }
+
+        #[invariant]
+        pub fn current_stack_cell_addresses_and_popped_stack_cell_addresses_are_disjoint_inv(&self) -> bool {
+            self.current_stack_cell_addresses.to_set().disjoint(self.popped_stack_cell_addresses)
+        }
+
+        #[invariant]
+        pub fn current_stack_cell_addresses_union_popped_stack_cell_addresses_are_all_addresses_inv(&self) -> bool {
+            self.current_stack_cell_addresses.to_set().union(self.popped_stack_cell_addresses) == self.all_stack_cell_addresses
+        }
+
+        #[invariant]
+        pub fn current_stack_cell_addresses_contains_base_address_inv(&self) -> bool {
+            &&& self.current_stack_cell_addresses.contains(self.base_address)
+            &&& self.current_stack_cell_addresses.first() == self.base_address
+        }
+
+        #[invariant]
+        pub fn every_current_stack_cell_address_has_a_permission_witness_inv(&self) -> bool {
+            forall |i: int| #![auto]
+                0 <= i < self.current_stack_cell_addresses.len() ==>
+                    self.all_stack_cell_permissions_witnesses.dom().contains(self.current_stack_cell_addresses[i])
+        }
+
+        #[invariant]
+        pub fn current_stack_cell_addresses_point_to_next_correctly_inv(&self) -> bool {
+            forall |addr: StackCellAddress, i: int|
+                (
+                    #[trigger] self.current_stack_cell_addresses.contains(addr) &&
+                    0 < i < self.current_stack_cell_addresses.len() &&
+                    #[trigger] self.current_stack_cell_addresses[i] == addr
+                ) ==>
+                self.current_stack_cell_addresses[i-1] == self.all_stack_cell_permissions_witnesses.index(addr).value().next
         }
 
         // Witnesses and Permissions Invariants
 
         #[invariant]
-        pub fn permissions_domain_equals_addresses_inv(&self) -> bool {
-            self.permissions.dom() == self.addresses
+        pub fn all_stack_cell_address_permissions_domain_equals_all_stack_cell_addresses_inv(&self) -> bool {
+            self.all_stack_cell_address_permissions.dom() == self.all_stack_cell_addresses
         }
 
         #[invariant]
-        pub fn permissions_equals_witnesses_inv(&self) -> bool {
-            self.permissions == self.witnesses
+        pub fn all_stack_cell_address_permissions_equals_all_stack_cell_permissions_witnesses_inv(&self) -> bool {
+            self.all_stack_cell_address_permissions == self.all_stack_cell_permissions_witnesses
         }
 
         #[invariant]
         pub fn base_address_witness_always_exists_inv(&self) -> bool {
-            self.witnesses.dom().contains(self.base_address)
+            self.all_stack_cell_permissions_witnesses.dom().contains(self.base_address)
         }
 
         #[invariant]
-        pub fn permissions_and_permissions_domains_are_correct_inv(&self) -> bool {
+        pub fn all_stack_cell_address_permissions_and_all_stack_cell_address_permissions_domains_are_correct_inv(&self) -> bool {
             forall |addr: StackCellAddress| #![auto]
                 (
-                    self.witnesses.dom().contains(addr) ==>
-                        self.witnesses.index(addr).addr() == addr
+                    self.all_stack_cell_permissions_witnesses.dom().contains(addr) ==>
+                        self.all_stack_cell_permissions_witnesses.index(addr).addr() == addr
                 ) && (
-                    self.permissions.dom().contains(addr) ==>
-                        self.permissions.index(addr).addr() == addr
+                    self.all_stack_cell_address_permissions.dom().contains(addr) ==>
+                        self.all_stack_cell_address_permissions.index(addr).addr() == addr
                 )
         }
 
         #[invariant]
-        pub fn witnesses_contains_next_witness_inv(&self) -> bool {
+        pub fn all_stack_cell_permissions_witnesses_contains_next_witness_inv(&self) -> bool {
             forall |addr: StackCellAddress| #![auto]
                 (
-                    self.witnesses.dom().contains(addr) &&
+                    self.all_stack_cell_permissions_witnesses.dom().contains(addr) &&
                     addr != self.base_address
                 ) ==>
-                self.witnesses.dom().contains(
-                    self.witnesses.index(addr).value().next
+                self.all_stack_cell_permissions_witnesses.dom().contains(
+                    self.all_stack_cell_permissions_witnesses.index(addr).value().next
                 )
         }
 
         #[invariant]
-        pub fn witnesses_are_init_except_base_witness_inv(&self) -> bool {
+        pub fn all_stack_cell_permissions_witnesses_are_init_except_base_witness_inv(&self) -> bool {
             forall |addr: StackCellAddress| #![auto]
-                self.witnesses.dom().contains(addr) ==> (
-                    addr != self.base_address <==> self.witnesses.index(addr).is_init()
+                self.all_stack_cell_permissions_witnesses.dom().contains(addr) ==> (
+                    addr != self.base_address <==> self.all_stack_cell_permissions_witnesses.index(addr).is_init()
                 )
         }
 
@@ -110,9 +159,11 @@ tokenized_state_machine!{
             {
                 require(base_permission.is_uninit());
                 init base_address = base_permission.addr();
-                init addresses = Set::empty().insert(base_permission.addr());
-                init witnesses = Map::empty().insert(base_permission.addr(), base_permission);
-                init permissions = Map::empty().insert(base_permission.addr(), base_permission);
+                init current_stack_cell_addresses = Seq::empty().push(base_permission.addr());
+                init popped_stack_cell_addresses = Set::empty();
+                init all_stack_cell_addresses = Set::empty().insert(base_permission.addr());
+                init all_stack_cell_permissions_witnesses = Map::empty().insert(base_permission.addr(), base_permission);
+                init all_stack_cell_address_permissions = Map::empty().insert(base_permission.addr(), base_permission);
             }
         }
 
@@ -120,13 +171,16 @@ tokenized_state_machine!{
             push(new_stack_cell_permission: PointsTo<StackCell>)
             {
                 require(new_stack_cell_permission.is_init());
-                require(pre.addresses.contains(new_stack_cell_permission.value().next));
+                require(pre.all_stack_cell_addresses.contains(new_stack_cell_permission.value().next));
+                require(pre.current_stack_cell_addresses.last() == new_stack_cell_permission.value().next);
 
-                require(!pre.addresses.contains(new_stack_cell_permission.addr()));
+                require(!pre.all_stack_cell_addresses.contains(new_stack_cell_permission.addr()));
+                require(!pre.popped_stack_cell_addresses.contains(new_stack_cell_permission.addr()));
 
-                update addresses = pre.addresses.insert(new_stack_cell_permission.addr());
-                deposit permissions += [new_stack_cell_permission.addr() => new_stack_cell_permission];
-                add witnesses (union)= [new_stack_cell_permission.addr() => new_stack_cell_permission];
+                update all_stack_cell_addresses = pre.all_stack_cell_addresses.insert(new_stack_cell_permission.addr());
+                update current_stack_cell_addresses = pre.current_stack_cell_addresses.push(new_stack_cell_permission.addr());
+                deposit all_stack_cell_address_permissions += [new_stack_cell_permission.addr() => new_stack_cell_permission];
+                add all_stack_cell_permissions_witnesses (union)= [new_stack_cell_permission.addr() => new_stack_cell_permission];
             }
         }
 
@@ -134,10 +188,15 @@ tokenized_state_machine!{
             pop(new_head_stack_cell_permission: PointsTo<StackCell>, current_head_stack_cell_permission: PointsTo<StackCell>)
             {
                 require(current_head_stack_cell_permission.addr() != pre.base_address);
+                require(pre.current_stack_cell_addresses.len() > 1);
 
+                require(pre.current_stack_cell_addresses.last() == current_head_stack_cell_permission.addr());
                 require(current_head_stack_cell_permission.value().next == new_head_stack_cell_permission.addr());
 
-                have witnesses >= [current_head_stack_cell_permission.addr() => current_head_stack_cell_permission];
+                have all_stack_cell_permissions_witnesses >= [current_head_stack_cell_permission.addr() => current_head_stack_cell_permission];
+
+                update popped_stack_cell_addresses = pre.popped_stack_cell_addresses.insert(pre.current_stack_cell_addresses.last());
+                update current_stack_cell_addresses = pre.current_stack_cell_addresses.drop_last();
             }
         }
 
@@ -145,46 +204,58 @@ tokenized_state_machine!{
             empty_stack_pop(base_stack_cell_permission: PointsTo<StackCell>)
             {
                 require(base_stack_cell_permission.addr() == pre.base_address);
+                require(pre.current_stack_cell_addresses.len() == 1);
 
-                have witnesses >= [base_stack_cell_permission.addr() => base_stack_cell_permission];
+                have all_stack_cell_permissions_witnesses >= [base_stack_cell_permission.addr() => base_stack_cell_permission];
+
             }
         }
 
         property!{
             get_permission_reference(stack_cell_address: StackCellAddress, stack_cell_permission: PointsTo<StackCell>) {
-                have witnesses >= [stack_cell_address => stack_cell_permission];
-                guard permissions >= [stack_cell_address => stack_cell_permission];
+                have all_stack_cell_permissions_witnesses >= [stack_cell_address => stack_cell_permission];
+                guard all_stack_cell_address_permissions >= [stack_cell_address => stack_cell_permission];
             }
         }
 
         property!{
             have_witness_after_pop(stack_cell_address: StackCellAddress, stack_cell_permission: PointsTo<StackCell>) {
                 require(stack_cell_address != pre.base_address);
-                have witnesses >= [stack_cell_address => stack_cell_permission];
-                assert(pre.addresses.contains(stack_cell_permission.value().next));
+                have all_stack_cell_permissions_witnesses >= [stack_cell_address => stack_cell_permission];
+                assert(pre.all_stack_cell_addresses.contains(stack_cell_permission.value().next));
             }
         }
 
         property!{
             same_address_implies_same_permission(stack_cell_address_1: StackCellAddress, stack_cell_permission_1: PointsTo<StackCell>, stack_cell_address_2: StackCellAddress, stack_cell_permission_2: PointsTo<StackCell>) {
                 require(stack_cell_address_1 == stack_cell_address_2);
-                have witnesses >= [stack_cell_address_1 => stack_cell_permission_1];
-                have witnesses >= [stack_cell_address_2 => stack_cell_permission_2];
+                have all_stack_cell_permissions_witnesses >= [stack_cell_address_1 => stack_cell_permission_1];
+                have all_stack_cell_permissions_witnesses >= [stack_cell_address_2 => stack_cell_permission_2];
                 assert(stack_cell_permission_1 == stack_cell_permission_2);
             }
         }
 
         #[inductive(initialize)]
         fn initialize_inductive(post: Self, base_permission: PointsTo<StackCell>) {
-            assert(post.witnesses.index(post.base_address).is_uninit());
+            assert(post.current_stack_cell_addresses.first() == post.base_address);
+            assert(post.current_stack_cell_addresses.to_set().union(post.popped_stack_cell_addresses) == post.all_stack_cell_addresses);
+            assert(post.all_stack_cell_permissions_witnesses.index(post.base_address).is_uninit());
         }
 
         #[inductive(push)]
         fn push_inductive(pre: Self, post: Self, new_stack_cell_permission: PointsTo<StackCell>) {
+            assert(pre.current_stack_cell_addresses == post.current_stack_cell_addresses.drop_last());
+            assert(post.current_stack_cell_addresses.last() == (new_stack_cell_permission.addr()));
+            assert(post.current_stack_cell_addresses.to_set().union(post.popped_stack_cell_addresses) == post.all_stack_cell_addresses);
         }
 
         #[inductive(pop)]
         fn pop_inductive(pre: Self, post: Self, new_head_stack_cell_permission: PointsTo<StackCell>, current_head_stack_cell_permission: PointsTo<StackCell>) {
+            assert(post.current_stack_cell_addresses.first() == post.base_address);
+            assert(pre.current_stack_cell_addresses.drop_last() == post.current_stack_cell_addresses);
+
+            pre.current_stack_cell_addresses.lemma_add_last_back();
+            assert(post.current_stack_cell_addresses.to_set().union(post.popped_stack_cell_addresses) == post.all_stack_cell_addresses);
         }
 
         #[inductive(empty_stack_pop)]
@@ -194,10 +265,12 @@ tokenized_state_machine!{
 }
 
 pub struct AtomicTokens {
-    pub witnesses: Tracked<
-        Map<StackCellAddress, machine::witnesses>,
+    pub current_stack_cell_addresses: Tracked<machine::current_stack_cell_addresses>,
+    pub popped_stack_cell_addresses: Tracked<machine::popped_stack_cell_addresses>,
+    pub all_stack_cell_permissions_witnesses: Tracked<
+        Map<StackCellAddress, machine::all_stack_cell_permissions_witnesses>,
     >,
-    pub addresses: Tracked<machine::addresses>,
+    pub all_stack_cell_addresses: Tracked<machine::all_stack_cell_addresses>,
 }
 
 #[derive(Copy, Clone)]
@@ -219,33 +292,59 @@ struct_with_invariants!{
             &&& base_address == instance.base_address()
 
             // All tokens must come from the correct TSM:
-            &&& atomic_tokens.addresses.instance_id() == instance.id()
+            &&& atomic_tokens.current_stack_cell_addresses.instance_id() == instance.id()
+            &&& atomic_tokens.popped_stack_cell_addresses.instance_id() == instance.id()
+            &&& atomic_tokens.all_stack_cell_addresses.instance_id() == instance.id()
             &&& (forall |addr: StackCellAddress| #![auto]
-                    atomic_tokens.witnesses.dom().contains(addr) ==>
-                        atomic_tokens.witnesses.index(addr).instance_id() == instance.id())
+                    atomic_tokens.all_stack_cell_permissions_witnesses.dom().contains(addr) ==>
+                        atomic_tokens.all_stack_cell_permissions_witnesses.index(addr).instance_id() == instance.id())
 
             // The base address is always present even before the first push:
-            &&& atomic_tokens.witnesses.dom().contains(base_address)
-            &&& atomic_tokens.addresses.value().contains(base_address)
+            &&& atomic_tokens.all_stack_cell_permissions_witnesses.dom().contains(base_address)
+            &&& atomic_tokens.all_stack_cell_addresses.value().contains(base_address)
+            &&& atomic_tokens.current_stack_cell_addresses.value().contains(base_address)
+            &&& atomic_tokens.current_stack_cell_addresses.value().first() == base_address
 
             // The top address is always tracked:
-            &&& atomic_tokens.witnesses.dom().contains(head_stack_cell_address)
+            &&& atomic_tokens.all_stack_cell_permissions_witnesses.dom().contains(head_stack_cell_address)
+            &&& atomic_tokens.current_stack_cell_addresses.value().contains(head_stack_cell_address)
+            &&& atomic_tokens.current_stack_cell_addresses.value().last() == head_stack_cell_address
+
+            // If the head is the base, then our stack is empty (we only have the base):
+            &&& head_stack_cell_address == base_address <==> atomic_tokens.current_stack_cell_addresses.value().len() == 1
+
+            // There are no duplicate addresses in our stack
+            &&& atomic_tokens.current_stack_cell_addresses.value().no_duplicates()
+
+            // The current stack cell addresses is disjoint from the set of all popped stack cell addresses:
+            // However, their union should be the domain of the set of all witnesses
+            &&& atomic_tokens.current_stack_cell_addresses.value().to_set().disjoint(atomic_tokens.popped_stack_cell_addresses.value())
+            &&& atomic_tokens.all_stack_cell_permissions_witnesses.dom() =~= atomic_tokens.current_stack_cell_addresses.value().to_set().union(atomic_tokens.popped_stack_cell_addresses.value())
 
             // The set of cell addresses should equal the domain of the witness tokens:
-            &&& atomic_tokens.addresses.value() == atomic_tokens.witnesses.dom()
+            &&& atomic_tokens.all_stack_cell_addresses.value() == atomic_tokens.all_stack_cell_permissions_witnesses.dom()
 
             // Every witness token's permission points to initialised memory except for the witness of the base address:
             &&& (forall |addr: StackCellAddress| #![auto]
-                    atomic_tokens.witnesses.dom().contains(addr) ==> (
-                        addr != base_address <==> atomic_tokens.witnesses.index(addr).value().is_init()
+                    atomic_tokens.all_stack_cell_permissions_witnesses.dom().contains(addr) ==> (
+                        addr != base_address <==> atomic_tokens.all_stack_cell_permissions_witnesses.index(addr).value().is_init()
                     ))
 
             // Each individual map entry must agree internally at the address it is referencing (map structure):
             &&& (forall |addr: StackCellAddress| #![auto]
-                    atomic_tokens.witnesses.dom().contains(addr) ==> (
-                        atomic_tokens.witnesses.index(addr).key() == addr &&
-                        atomic_tokens.witnesses.index(addr).value().addr() == addr
+                    atomic_tokens.all_stack_cell_permissions_witnesses.dom().contains(addr) ==> (
+                        atomic_tokens.all_stack_cell_permissions_witnesses.index(addr).key() == addr &&
+                        atomic_tokens.all_stack_cell_permissions_witnesses.index(addr).value().addr() == addr
                     ))
+
+            // There exists a witness for the next stack cell of every current stack cell (except base):
+            &&& forall |addr: StackCellAddress, i: int|
+                (
+                    #[trigger] atomic_tokens.current_stack_cell_addresses.value().contains(addr) &&
+                    0 < i < atomic_tokens.current_stack_cell_addresses.value().len() &&
+                    #[trigger] atomic_tokens.current_stack_cell_addresses.value()[i] == addr
+                ) ==>
+                atomic_tokens.current_stack_cell_addresses.value()[i-1] == atomic_tokens.all_stack_cell_permissions_witnesses.index(addr).value().value().next
         }
     }
 }
@@ -258,23 +357,29 @@ impl TreiberStack {
         let (base, Tracked(base_perm)) = PPtr::<StackCell>::empty();
         let base_address = base.addr();
 
-        let tracked permissions = Map::tracked_empty();
+        let tracked all_stack_cell_address_permissions = Map::tracked_empty();
         proof {
-            permissions.tracked_insert(base_address, base_perm);
+            all_stack_cell_address_permissions.tracked_insert(base_address, base_perm);
         }
 
         let tracked (
             Tracked(instance),
-            Tracked(addresses),
-            Tracked(witnesses),
-        ) = machine::Instance::initialize(base_perm, permissions);
+            Tracked(current_stack_cell_addresses),
+            Tracked(popped_stack_cell_addresses),
+            Tracked(all_stack_cell_addresses),
+            Tracked(all_stack_cell_permissions_witnesses),
+        ) = machine::Instance::initialize(base_perm, all_stack_cell_address_permissions);
 
-        let tracked witness_tokens = witnesses.into_map();
+        let tracked witness_tokens = all_stack_cell_permissions_witnesses.into_map();
 
         let atomic_tokens = AtomicTokens {
-            witnesses: Tracked(witness_tokens),
-            addresses: Tracked(addresses),
+            current_stack_cell_addresses: Tracked(current_stack_cell_addresses),
+            popped_stack_cell_addresses: Tracked(popped_stack_cell_addresses),
+            all_stack_cell_permissions_witnesses: Tracked(witness_tokens),
+            all_stack_cell_addresses: Tracked(all_stack_cell_addresses),
         };
+
+        assert(current_stack_cell_addresses.value().first() == base_address);
 
         let head_stack_cell_address = AtomicUsize::new(
             Ghost((base_address, Tracked(instance))),
@@ -312,21 +417,61 @@ impl TreiberStack {
                     if let Ok(_) = previous_head_address_result {
 
                         // Proving that there does not already exist a permission for the cell in the TSM (or our tokens by extension):
-                        if points_to_inv.witnesses@.dom().contains(new_stack_cell_permission.addr()) {
-                            let tracked witness_token = points_to_inv.witnesses.tracked_borrow(new_stack_cell_permission.addr());
+                        if points_to_inv.all_stack_cell_permissions_witnesses@.dom().contains(new_stack_cell_permission.addr()) {
+                            let tracked witness_token = points_to_inv.all_stack_cell_permissions_witnesses.tracked_borrow(new_stack_cell_permission.addr());
                             let tracked stack_cell_permission_reference = self.instance.get_permission_reference(witness_token.key(), witness_token.value(), &witness_token);
                             new_stack_cell_permission.is_distinct(stack_cell_permission_reference);
                             assert(false);
                         }
 
+                        let ghost pre_current_stack_cell_addresses = Ghost(points_to_inv.current_stack_cell_addresses@.value());
+
                         let tracked witness_token = self.instance.push(
                             new_stack_cell_permission,
-                            &mut points_to_inv.addresses,
+                            &mut points_to_inv.current_stack_cell_addresses,
+                            &mut points_to_inv.popped_stack_cell_addresses,
+                            &mut points_to_inv.all_stack_cell_addresses,
                             new_stack_cell_permission
                         );
 
+                        assert(pre_current_stack_cell_addresses@ =~= pre_current_stack_cell_addresses.push(witness_token.value().addr()).drop_last());
+
                         // Insert the witness token for the new stack cell into our map:
-                        points_to_inv.witnesses.tracked_insert(witness_token.key(), witness_token);
+                        points_to_inv.all_stack_cell_permissions_witnesses.tracked_insert(witness_token.key(), witness_token);
+
+                        // The push correctly updated our view of the stack:
+                        assert(points_to_inv.current_stack_cell_addresses.value().last() == witness_token.key());
+
+                        // There exists a witness for the next stack cell of every current stack cell (except base):
+                        assert(
+                            forall |addr: StackCellAddress|
+                                #[trigger] points_to_inv.current_stack_cell_addresses.value().contains(addr) ==> (
+                                    forall |i: int|
+                                        (0 < i < points_to_inv.current_stack_cell_addresses.value().len() - 1 && #[trigger] points_to_inv.current_stack_cell_addresses.value()[i] == addr) ==> (
+                                            points_to_inv.current_stack_cell_addresses.value()[i-1] == points_to_inv.all_stack_cell_permissions_witnesses.index(addr).value().value().next
+                                        )
+                                )
+                        ) by {
+                            assert(
+                                forall |addr: StackCellAddress|
+                                    (#[trigger] points_to_inv.current_stack_cell_addresses.value().contains(addr) && addr != points_to_inv.current_stack_cell_addresses.value().last()) ==>
+                                        points_to_inv.current_stack_cell_addresses.value().drop_last().contains(addr)
+                            );
+
+                            assert(
+                                forall |addr: StackCellAddress|
+                                    #[trigger] points_to_inv.current_stack_cell_addresses.value().drop_last().contains(addr) ==> (
+                                        forall |i: int|
+                                            (0 < i < points_to_inv.current_stack_cell_addresses.value().len() - 1 && #[trigger] points_to_inv.current_stack_cell_addresses.value()[i] == addr) ==> (
+                                                points_to_inv.current_stack_cell_addresses.value()[i-1] == points_to_inv.all_stack_cell_permissions_witnesses.index(addr).value().value().next
+                                            )
+                                    )
+                            );
+
+                            assert(points_to_inv.current_stack_cell_addresses.value().last() == witness_token.key());
+                            assert(points_to_inv.current_stack_cell_addresses.value().drop_last().last() == points_to_inv.all_stack_cell_permissions_witnesses.index(witness_token.key()).value().value().next);
+                        };
+
                     }
                 }
             );
@@ -356,11 +501,12 @@ impl TreiberStack {
                 returning addr;
 
                 ghost points_to_inv => {
-                    stack_head_witness = points_to_inv.witnesses.tracked_remove(addr);
-                    points_to_inv.witnesses.tracked_insert(addr, stack_head_witness.clone());
+                    stack_head_witness = points_to_inv.all_stack_cell_permissions_witnesses.tracked_remove(addr);
+                    points_to_inv.all_stack_cell_permissions_witnesses.tracked_insert(addr, stack_head_witness.clone());
                     if addr == self.base_address {
                         self.instance.empty_stack_pop(
                             stack_head_witness.value(),
+                            &mut points_to_inv.current_stack_cell_addresses,
                             &stack_head_witness
                         )
                     }
@@ -397,13 +543,13 @@ impl TreiberStack {
                         self.instance.have_witness_after_pop(
                             stack_head_witness.key(),
                             stack_head_witness.value(),
-                            &points_to_inv.addresses,
+                            &points_to_inv.all_stack_cell_addresses,
                             &stack_head_witness
                         );
-                        let tracked new_stack_head_witness = points_to_inv.witnesses.tracked_borrow(new_stack_head_address);
+                        let tracked new_stack_head_witness = points_to_inv.all_stack_cell_permissions_witnesses.tracked_borrow(new_stack_head_address);
 
                         // Assert that the witness token for the current stack head, has next == new_stack_head_address:
-                        let tracked possible_second_old_stack_head_witness = points_to_inv.witnesses.tracked_borrow(current_stack_head_address);
+                        let tracked possible_second_old_stack_head_witness = points_to_inv.all_stack_cell_permissions_witnesses.tracked_borrow(current_stack_head_address);
                         self.instance.same_address_implies_same_permission(
                             stack_head_witness.key(),
                             stack_head_witness.value(),
@@ -414,12 +560,28 @@ impl TreiberStack {
                         );
                         assert(possible_second_old_stack_head_witness.value() == stack_head_witness.value());
                         assert(stack_head_witness.value().value().next == new_stack_head_address);
+
+
+                        let ghost pre_current_stack_cell_addresses = Ghost(points_to_inv.current_stack_cell_addresses@.value());
+
+                        // This is a pointless assert - the fact is trivial but verus needs to discharge it
+                        assert(
+                            forall |addr: StackCellAddress|
+                                #[trigger] pre_current_stack_cell_addresses.subrange(0, pre_current_stack_cell_addresses.len() - 1).contains(addr) ==>
+                                    pre_current_stack_cell_addresses.contains(addr)
+                        );
                         
                         self.instance.pop(
                             new_stack_head_witness.value(),
                             stack_head_witness.value(),
+                            &mut points_to_inv.current_stack_cell_addresses,
+                            &mut points_to_inv.popped_stack_cell_addresses,
                             &stack_head_witness
                         );
+
+                        // Same here - this is a trivial fact, but we need to discharge it:
+                        assert(pre_current_stack_cell_addresses@ =~= pre_current_stack_cell_addresses@.drop_last().push(stack_head_witness.value().addr()));
+                        pre_current_stack_cell_addresses@.drop_last().lemma_push_to_set_commute(stack_head_witness.value().addr());
                     }
                 }
             };

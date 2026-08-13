@@ -67,28 +67,28 @@ tokenized_state_machine!{
         // Current Stack Representation Invariants
 
         #[invariant]
-        pub fn current_stack_addresses_no_duplicates_inv(&self) -> bool {
+        pub fn no_duplicates_inv(&self) -> bool {
             self.current_stack_addresses.no_duplicates()
         }
 
         #[invariant]
-        pub fn current_stack_addresses_and_popped_addresses_are_disjoint_inv(&self) -> bool {
+        pub fn current_stack_disjoint_popped_inv(&self) -> bool {
             self.current_stack_addresses.to_set().disjoint(self.popped_addresses)
         }
 
         #[invariant]
-        pub fn current_stack_addresses_union_popped_addresses_are_all_addresses_inv(&self) -> bool {
+        pub fn current_stack_union_popped_inv(&self) -> bool {
             self.current_stack_addresses.to_set().union(self.popped_addresses) == self.addresses
         }
 
         #[invariant]
-        pub fn current_stack_addresses_contains_base_address_inv(&self) -> bool {
+        pub fn current_stack_contains_base_address_inv(&self) -> bool {
             &&& self.current_stack_addresses.contains(self.base_address)
             &&& self.current_stack_addresses.first() == self.base_address
         }
 
         #[invariant]
-        pub fn every_current_stack_cell_address_has_a_permission_witness_inv(&self) -> bool {
+        pub fn current_stack_has_permissions_witness_inv(&self) -> bool {
             forall |i: int| #![auto]
                 0 <= i < self.current_stack_addresses.len() ==>
                     self.witnesses.dom().contains(self.current_stack_addresses[i])
@@ -108,22 +108,22 @@ tokenized_state_machine!{
         // Witnesses and Permissions Invariants
 
         #[invariant]
-        pub fn permissions_domain_equals_addresses_inv(&self) -> bool {
+        pub fn addresses_reflect_permissions_inv(&self) -> bool {
             self.permissions.dom() == self.addresses
         }
 
         #[invariant]
-        pub fn permissions_equals_witnesses_inv(&self) -> bool {
+        pub fn witnesses_reflect_permissions_inv(&self) -> bool {
             self.permissions == self.witnesses
         }
 
         #[invariant]
-        pub fn base_address_witness_always_exists_inv(&self) -> bool {
+        pub fn base_address_witness_exists_inv(&self) -> bool {
             self.witnesses.dom().contains(self.base_address)
         }
 
         #[invariant]
-        pub fn permissions_and_permissions_domains_are_correct_inv(&self) -> bool {
+        pub fn maps_are_correct_inv(&self) -> bool {
             forall |addr: StackCellAddress| #![auto]
                 (
                     self.witnesses.dom().contains(addr) ==>
@@ -147,10 +147,10 @@ tokenized_state_machine!{
         }
 
         #[invariant]
-        pub fn witnesses_are_init_except_base_witness_inv(&self) -> bool {
+        pub fn permissions_are_init_except_base_inv(&self) -> bool {
             forall |addr: StackCellAddress| #![auto]
-                self.witnesses.dom().contains(addr) ==> (
-                    addr != self.base_address <==> self.witnesses.index(addr).is_init()
+                self.permissions.dom().contains(addr) ==> (
+                    addr != self.base_address <==> self.permissions.index(addr).is_init()
                 )
         }
 

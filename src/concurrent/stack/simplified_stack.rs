@@ -3,12 +3,7 @@ use std::sync::Arc;
 use verus_builtin::*;
 use verus_builtin_macros::*;
 use verus_state_machines_macros::tokenized_state_machine;
-use vstd::{
-    atomic_ghost::*, 
-    prelude::*, 
-    pervasive::*,
-    simple_pptr::*,
-};
+use vstd::{atomic_ghost::*, pervasive::*, prelude::*, simple_pptr::*};
 
 verus! {
 
@@ -145,7 +140,6 @@ tokenized_state_machine!{
             initialize(base_permission: PointsTo<StackCell>)
             {
                 require(base_permission.is_uninit());
-
                 init base_address = base_permission.addr();
                 init current_stack_addresses = Seq::empty().push(base_permission.addr());
                 init popped_addresses = Set::empty();
@@ -161,7 +155,6 @@ tokenized_state_machine!{
                 require(new_stack_cell_permission.is_init());
                 require(pre.current_stack_addresses.last() == new_stack_cell_permission.value().next);
                 require(!pre.addresses.contains(new_stack_cell_permission.addr()));
-
                 update addresses = pre.addresses.insert(new_stack_cell_permission.addr());
                 update current_stack_addresses = pre.current_stack_addresses.push(new_stack_cell_permission.addr());
                 deposit permissions += [new_stack_cell_permission.addr() => new_stack_cell_permission];
@@ -174,7 +167,6 @@ tokenized_state_machine!{
             {
                 require(current_head_stack_cell_permission.addr() != pre.base_address);
                 require(pre.current_stack_addresses.last() == current_head_stack_cell_permission.addr());
-
                 have witnesses >= [current_head_stack_cell_permission.addr() => current_head_stack_cell_permission];
                 update popped_addresses = pre.popped_addresses.insert(pre.current_stack_addresses.last());
                 update current_stack_addresses = pre.current_stack_addresses.drop_last();
@@ -191,7 +183,6 @@ tokenized_state_machine!{
         property!{
             have_witness_after_pop(stack_cell_address: StackCellAddress, stack_cell_permission: PointsTo<StackCell>) {
                 require(stack_cell_address != pre.base_address);
-
                 have witnesses >= [stack_cell_address => stack_cell_permission];
                 assert(pre.addresses.contains(stack_cell_permission.value().next));
             }
@@ -200,7 +191,6 @@ tokenized_state_machine!{
         property!{
             same_address_implies_same_permission(stack_cell_permission_1: PointsTo<StackCell>, stack_cell_permission_2: PointsTo<StackCell>) {
                 require(stack_cell_permission_1.addr() == stack_cell_permission_2.addr());
-
                 have witnesses >= [stack_cell_permission_1.addr() => stack_cell_permission_1];
                 have witnesses >= [stack_cell_permission_2.addr() => stack_cell_permission_2];
                 assert(stack_cell_permission_1 == stack_cell_permission_2);
@@ -232,9 +222,7 @@ tokenized_state_machine!{
 pub struct AtomicTokens {
     pub current_stack_addresses: Tracked<machine::current_stack_addresses>,
     pub popped_addresses: Tracked<machine::popped_addresses>,
-    pub witnesses: Tracked<
-        Map<StackCellAddress, machine::witnesses>,
-    >,
+    pub witnesses: Tracked<Map<StackCellAddress, machine::witnesses>>,
     pub addresses: Tracked<machine::addresses>,
 }
 
@@ -247,12 +235,12 @@ pub struct StackCell {
 struct_with_invariants!{
     pub struct TreiberStack {
         pub base_address: StackCellAddress,
-        pub head_stack_cell_address: AtomicUsize<_, AtomicTokens, _>,
+        pub top_addr: AtomicUsize<_, AtomicTokens, _>,
         pub instance: Tracked<machine::Instance>,
     }
 
     pub open spec fn wf(self) -> bool {
-        invariant on head_stack_cell_address with (base_address, instance) is (head_stack_cell_address: usize, atomic_tokens: AtomicTokens) {
+        invariant on top_addr with (base_address, instance) is (top_addr: usize, atomic_tokens: AtomicTokens) {
             // The base address must reflect the TSM base address:
             &&& base_address == instance.base_address()
 
@@ -260,23 +248,22 @@ struct_with_invariants!{
             &&& atomic_tokens.current_stack_addresses.instance_id() == instance.id()
             &&& atomic_tokens.popped_addresses.instance_id() == instance.id()
             &&& atomic_tokens.addresses.instance_id() == instance.id()
-            &&& (forall |addr: StackCellAddress| #![auto]
+            &&& forall |addr: StackCellAddress| #![auto]
                     atomic_tokens.witnesses.dom().contains(addr) ==>
-                        atomic_tokens.witnesses.index(addr).instance_id() == instance.id())
+                        atomic_tokens.witnesses.index(addr).instance_id() == instance.id()
 
             // The base address is always present even before the first push:
             &&& atomic_tokens.witnesses.dom().contains(base_address)
             &&& atomic_tokens.addresses.value().contains(base_address)
-            &&& atomic_tokens.current_stack_addresses.value().contains(base_address)
             &&& atomic_tokens.current_stack_addresses.value().first() == base_address
 
             // The top address is always tracked:
-            &&& atomic_tokens.witnesses.dom().contains(head_stack_cell_address)
-            &&& atomic_tokens.current_stack_addresses.value().contains(head_stack_cell_address)
-            &&& atomic_tokens.current_stack_addresses.value().last() == head_stack_cell_address
+            &&& atomic_tokens.witnesses.dom().contains(top_addr)
+            &&& atomic_tokens.current_stack_addresses.value().contains(top_addr)
+            &&& atomic_tokens.current_stack_addresses.value().last() == top_addr
 
-            // If the head is the base, then our stack is empty (we only have the base):
-            &&& (head_stack_cell_address == base_address <==> atomic_tokens.current_stack_addresses.value().len() == 1)
+            // If the top is the base, then our stack is empty (we only have the base):
+            &&& top_addr == base_address <==> atomic_tokens.current_stack_addresses.value().len() == 1
 
             // There are no duplicate addresses in our stack
             &&& atomic_tokens.current_stack_addresses.value().no_duplicates()
@@ -285,31 +272,39 @@ struct_with_invariants!{
             // However, their union should be the domain of the set of all witnesses
             &&& atomic_tokens.current_stack_addresses.value().to_set().disjoint(atomic_tokens.popped_addresses.value())
             &&& atomic_tokens.witnesses.dom() =~= atomic_tokens.current_stack_addresses.value().to_set().union(atomic_tokens.popped_addresses.value())
+            &&& atomic_tokens.current_stack_addresses.value().to_set().subset_of(atomic_tokens.witnesses.dom())
 
             // The set of cell addresses should equal the domain of the witness tokens:
             &&& atomic_tokens.addresses.value() == atomic_tokens.witnesses.dom()
 
             // Every witness token's permission points to initialised memory except for the witness of the base address:
-            &&& (forall |addr: StackCellAddress| #![auto]
+            &&& forall |addr: StackCellAddress| #![auto]
                     atomic_tokens.witnesses.dom().contains(addr) ==> (
                         addr != base_address <==> atomic_tokens.witnesses.index(addr).value().is_init()
-                    ))
+                    )
 
             // Each individual map entry must agree internally at the address it is referencing (map structure):
-            &&& (forall |addr: StackCellAddress| #![auto]
+            &&& forall |addr: StackCellAddress| #![auto]
                     atomic_tokens.witnesses.dom().contains(addr) ==> (
                         atomic_tokens.witnesses.index(addr).key() == addr &&
                         atomic_tokens.witnesses.index(addr).value().addr() == addr
-                    ))
+                    )
 
             // There exists a witness for the next stack cell of every current stack cell (except base):
-            &&& forall |addr: StackCellAddress, i: int|
-                (
-                    #[trigger] atomic_tokens.current_stack_addresses.value().contains(addr) &&
-                    0 < i < atomic_tokens.current_stack_addresses.value().len() &&
-                    #[trigger] atomic_tokens.current_stack_addresses.value()[i] == addr
-                ) ==>
-                atomic_tokens.current_stack_addresses.value()[i-1] == atomic_tokens.witnesses.index(addr).value().value().next
+            &&& forall |addr: StackCellAddress| #![auto]
+                    (
+                        atomic_tokens.witnesses.dom().contains(addr) &&
+                        addr != base_address
+                    ) ==>
+                    atomic_tokens.witnesses.dom().contains(
+                        atomic_tokens.witnesses.index(addr).value().value().next
+                    )
+
+            &&& forall |i: int| #![auto]
+                    0 < i < atomic_tokens.current_stack_addresses.value().len() ==> (
+                        atomic_tokens.current_stack_addresses.value()[i-1] ==
+                        atomic_tokens.witnesses.index(atomic_tokens.current_stack_addresses.value()[i]).value().value().next
+                    )
         }
     }
 }
@@ -346,33 +341,33 @@ impl TreiberStack {
 
         assert(current_stack_addresses.value().first() == base_address);
 
-        let head_stack_cell_address = AtomicUsize::new(
+        let top_addr = AtomicUsize::new(
             Ghost((base_address, Tracked(instance))),
             base_address,
             Tracked(atomic_tokens),
         );
 
-        TreiberStack { base_address, head_stack_cell_address, instance: Tracked(instance) }
+        TreiberStack { base_address, top_addr, instance: Tracked(instance) }
     }
 
     pub fn push(&self, elem: u32)
         requires
             self.wf(),
         ensures
-            self.wf()
+            self.wf(),
     {
         loop
             invariant
                 self.wf(),
         {
-            let new_stack_cell = StackCell { elem, next: self.head_stack_cell_address.load() };
+            let new_stack_cell = StackCell { elem, next: self.top_addr.load() };
             let (permission_guarded_new_stack_cell, Tracked(new_stack_cell_permission)) = PPtr::new(
                 new_stack_cell,
             );
 
             let mut push_result =
                 atomic_with_ghost!(
-                self.head_stack_cell_address => compare_exchange(
+                self.top_addr => compare_exchange(
                     permission_guarded_new_stack_cell.read(Tracked(&new_stack_cell_permission)).next,
                     permission_guarded_new_stack_cell.addr()
                 );
@@ -405,37 +400,6 @@ impl TreiberStack {
 
                         // The push correctly updated our view of the stack:
                         assert(points_to_inv.current_stack_addresses.value().last() == witness_token.key());
-
-                        // There exists a witness for the next stack cell of every current stack cell (except base):
-                        assert(
-                            forall |addr: StackCellAddress|
-                                #[trigger] points_to_inv.current_stack_addresses.value().contains(addr) ==> (
-                                    forall |i: int|
-                                        (0 < i < points_to_inv.current_stack_addresses.value().len() - 1 && #[trigger] points_to_inv.current_stack_addresses.value()[i] == addr) ==> (
-                                            points_to_inv.current_stack_addresses.value()[i-1] == points_to_inv.witnesses.index(addr).value().value().next
-                                        )
-                                )
-                        ) by {
-                            assert(
-                                forall |addr: StackCellAddress|
-                                    (#[trigger] points_to_inv.current_stack_addresses.value().contains(addr) && addr != points_to_inv.current_stack_addresses.value().last()) ==>
-                                        points_to_inv.current_stack_addresses.value().drop_last().contains(addr)
-                            );
-
-                            assert(
-                                forall |addr: StackCellAddress|
-                                    #[trigger] points_to_inv.current_stack_addresses.value().drop_last().contains(addr) ==> (
-                                        forall |i: int|
-                                            (0 < i < points_to_inv.current_stack_addresses.value().len() - 1 && #[trigger] points_to_inv.current_stack_addresses.value()[i] == addr) ==> (
-                                                points_to_inv.current_stack_addresses.value()[i-1] == points_to_inv.witnesses.index(addr).value().value().next
-                                            )
-                                    )
-                            );
-
-                            assert(points_to_inv.current_stack_addresses.value().last() == witness_token.key());
-                            assert(points_to_inv.current_stack_addresses.value().drop_last().last() == points_to_inv.witnesses.index(witness_token.key()).value().value().next);
-                        };
-
                     }
                 }
             );
@@ -450,7 +414,7 @@ impl TreiberStack {
         requires
             self.wf(),
         ensures
-            self.wf()
+            self.wf(),
     {
         loop
             invariant
@@ -459,9 +423,9 @@ impl TreiberStack {
             let tracked stack_head_witness;
             let tracked stack_cell_permission_reference;
 
-            let mut head_stack_cell_address =
+            let mut top_addr =
                 atomic_with_ghost!{
-                self.head_stack_cell_address => load();
+                self.top_addr => load();
                 returning addr;
 
                 ghost points_to_inv => {
@@ -469,10 +433,9 @@ impl TreiberStack {
                 }
             };
 
-            if head_stack_cell_address == self.base_address {
+            if top_addr == self.base_address {
                 return None;
             }
-
             proof {
                 stack_cell_permission_reference =
                 self.instance.get_permission_reference(
@@ -482,13 +445,13 @@ impl TreiberStack {
                 );
             }
 
-            let permissioned_pointer = PPtr::<StackCell>::from_addr(head_stack_cell_address);
+            let permissioned_pointer = PPtr::<StackCell>::from_addr(top_addr);
             let head_read = permissioned_pointer.read(Tracked(stack_cell_permission_reference));
 
             let mut new_stack_head_address_result =
                 atomic_with_ghost!{
-                self.head_stack_cell_address => compare_exchange(
-                    head_stack_cell_address,
+                self.top_addr => compare_exchange(
+                    top_addr,
                     head_read.next
                 );
                 update current_stack_head_address -> new_stack_head_address;
@@ -513,15 +476,9 @@ impl TreiberStack {
                             &possible_second_old_stack_head_witness
                         );
 
-                        // These asserts are trivial, but we need to disharge them:
-                        let ghost pre_current_stack_addresses = Ghost(points_to_inv.current_stack_addresses@.value());
-                        assert(pre_current_stack_addresses@ =~= pre_current_stack_addresses@.drop_last().push(stack_head_witness.value().addr()));
-                        assert(
-                            forall |addr: StackCellAddress|
-                                #[trigger] pre_current_stack_addresses.subrange(0, pre_current_stack_addresses.len() - 1).contains(addr) ==>
-                                    pre_current_stack_addresses.contains(addr)
-                        );
-                        
+                        // This assert is are trivial, but we need to disharge them:
+                        assert(points_to_inv.current_stack_addresses.value() =~= points_to_inv.current_stack_addresses.value().drop_last().push(stack_head_witness.value().addr()));
+
                         self.instance.pop(
                             stack_head_witness.value(),
                             &mut points_to_inv.current_stack_addresses,
@@ -539,5 +496,7 @@ impl TreiberStack {
     }
 }
 
-pub fn main() {}
+pub fn main() {
+}
+
 } // verus!

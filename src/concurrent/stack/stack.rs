@@ -3,12 +3,7 @@ use std::sync::Arc;
 use verus_builtin::*;
 use verus_builtin_macros::*;
 use verus_state_machines_macros::tokenized_state_machine;
-use vstd::{
-    atomic_ghost::*, 
-    prelude::*, 
-    pervasive::*,
-    simple_pptr::*,
-};
+use vstd::{atomic_ghost::*, pervasive::*, prelude::*, simple_pptr::*};
 
 verus! {
 
@@ -658,9 +653,7 @@ impl TreiberStack {
         TreiberStack { base_address, head_stack_cell_address, instance: Tracked(instance) }
     }
 
-    pub fn push(&self, elem: u32) -> (linearised_push_witness: Tracked<
-        machine::linearised_history,
-    >)
+    pub fn push(&self, elem: u32) -> (linearised_push_witness: Tracked<machine::linearised_history>)
         requires
             self.wf(),
         ensures
@@ -886,4 +879,5 @@ impl TreiberStack {
         }
     }
 }
+
 } // verus!

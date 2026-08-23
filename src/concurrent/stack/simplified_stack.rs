@@ -155,8 +155,10 @@ tokenized_state_machine!{
                 require(new_stack_cell_permission.is_init());
                 require(pre.current_stack_addresses.last() == new_stack_cell_permission.value().next);
                 require(!pre.addresses.contains(new_stack_cell_permission.addr()));
+
                 update addresses = pre.addresses.insert(new_stack_cell_permission.addr());
                 update current_stack_addresses = pre.current_stack_addresses.push(new_stack_cell_permission.addr());
+
                 deposit permissions += [new_stack_cell_permission.addr() => new_stack_cell_permission];
                 add witnesses (union)= [new_stack_cell_permission.addr() => new_stack_cell_permission];
             }
@@ -236,7 +238,7 @@ struct_with_invariants!{
     pub struct TreiberStack {
         pub base_address: StackCellAddress,
         pub top_addr: AtomicUsize<_, AtomicTokens, _>,
-        pub instance: Tracked<machine::Instance>,
+        pub instance: Tracked<machine::Instance>
     }
 
     pub open spec fn wf(self) -> bool {

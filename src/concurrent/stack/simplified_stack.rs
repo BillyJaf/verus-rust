@@ -124,7 +124,7 @@ tokenized_state_machine!{
                     addr != self.base_address
                 ) ==>
                 self.witnesses.dom().contains(
-                    self.witnesses.index(addr).value().next
+                    self.witnesses.index(addr).value().next_address
                 )
         }
 
@@ -153,7 +153,7 @@ tokenized_state_machine!{
             push(new_stack_cell_permission: PointsTo<StackCell>)
             {
                 require(new_stack_cell_permission.is_init());
-                require(pre.current_stack_addresses.last() == new_stack_cell_permission.value().next);
+                require(pre.current_stack_addresses.last() == new_stack_cell_permission.value().next_address);
                 require(!pre.addresses.contains(new_stack_cell_permission.addr()));
 
                 update addresses = pre.addresses.insert(new_stack_cell_permission.addr());
@@ -186,7 +186,7 @@ tokenized_state_machine!{
             have_witness_after_pop(stack_cell_address: StackCellAddress, stack_cell_permission: PointsTo<StackCell>) {
                 require(stack_cell_address != pre.base_address);
                 have witnesses >= [stack_cell_address => stack_cell_permission];
-                assert(pre.addresses.contains(stack_cell_permission.value().next));
+                assert(pre.addresses.contains(stack_cell_permission.value().next_address));
             }
         }
 
@@ -231,7 +231,7 @@ pub struct AtomicTokens {
 #[derive(Copy, Clone)]
 pub struct StackCell {
     pub elem: u32,
-    pub next: StackCellAddress,
+    pub next_address: StackCellAddress,
 }
 
 struct_with_invariants!{
@@ -299,13 +299,13 @@ struct_with_invariants!{
                         addr != base_address
                     ) ==>
                     atomic_tokens.witnesses.dom().contains(
-                        atomic_tokens.witnesses.index(addr).value().value().next
+                        atomic_tokens.witnesses.index(addr).value().value().next_address
                     )
 
             &&& forall |i: int| #![auto]
                     0 < i < atomic_tokens.current_stack_addresses.value().len() ==> (
                         atomic_tokens.current_stack_addresses.value()[i-1] ==
-                        atomic_tokens.witnesses.index(atomic_tokens.current_stack_addresses.value()[i]).value().value().next
+                        atomic_tokens.witnesses.index(atomic_tokens.current_stack_addresses.value()[i]).value().value().next_address
                     )
         }
     }
@@ -362,7 +362,7 @@ impl TreiberStack {
             invariant
                 self.wf(),
         {
-            let new_stack_cell = StackCell { elem, next: self.top_address.load() };
+            let new_stack_cell = StackCell { elem, next_address: self.top_address.load() };
             let (permission_guarded_new_stack_cell, Tracked(new_stack_cell_permission)) = PPtr::new(
                 new_stack_cell,
             );
@@ -370,7 +370,7 @@ impl TreiberStack {
             let mut push_result =
                 atomic_with_ghost!(
                 self.top_address => compare_exchange(
-                    permission_guarded_new_stack_cell.read(Tracked(&new_stack_cell_permission)).next,
+                    permission_guarded_new_stack_cell.read(Tracked(&new_stack_cell_permission)).next_address,
                     permission_guarded_new_stack_cell.addr()
                 );
                 returning previous_head_address_result;
@@ -454,7 +454,7 @@ impl TreiberStack {
                 atomic_with_ghost!{
                 self.top_address => compare_exchange(
                     top_address,
-                    head_read.next
+                    head_read.next_address
                 );
                 update current_stack_head_address -> new_stack_head_address;
                 returning previous_head_address_result;
@@ -469,7 +469,7 @@ impl TreiberStack {
                             &stack_head_witness
                         );
 
-                        // Assert that the witness token for the current stack head, has next == new_stack_head_address:
+                        // Assert that the witness token for the current stack head, has next_address == new_stack_head_address:
                         let tracked possible_second_old_stack_head_witness = points_to_inv.witnesses.tracked_borrow(current_stack_head_address);
                         self.instance.same_address_implies_same_permission(
                             stack_head_witness.value(),

@@ -237,12 +237,12 @@ pub struct StackCell {
 struct_with_invariants!{
     pub struct TreiberStack {
         pub base_address: StackCellAddress,
-        pub top_addr: AtomicUsize<_, AtomicTokens, _>,
+        pub top_address: AtomicUsize<_, AtomicTokens, _>,
         pub instance: Tracked<machine::Instance>
     }
 
     pub open spec fn wf(self) -> bool {
-        invariant on top_addr with (base_address, instance) is (top_addr: usize, atomic_tokens: AtomicTokens) {
+        invariant on top_address with (base_address, instance) is (top_addr: usize, atomic_tokens: AtomicTokens) {
             // The base address must reflect the TSM base address:
             &&& base_address == instance.base_address()
 
@@ -256,7 +256,7 @@ struct_with_invariants!{
 
             // The base address is always present even before the first push:
             &&& atomic_tokens.witnesses.dom().contains(base_address)
-            &&& atomic_tokens.addresses.value().contains(base_address)
+            &&& atomic_tokens.current_stack_addresses.value().contains(base_address)
             &&& atomic_tokens.current_stack_addresses.value().first() == base_address
 
             // The top address is always tracked:
@@ -343,13 +343,13 @@ impl TreiberStack {
 
         assert(current_stack_addresses.value().first() == base_address);
 
-        let top_addr = AtomicUsize::new(
+        let top_address = AtomicUsize::new(
             Ghost((base_address, Tracked(instance))),
             base_address,
             Tracked(atomic_tokens),
         );
 
-        TreiberStack { base_address, top_addr, instance: Tracked(instance) }
+        TreiberStack { base_address, top_address, instance: Tracked(instance) }
     }
 
     pub fn push(&self, elem: u32)
@@ -362,14 +362,14 @@ impl TreiberStack {
             invariant
                 self.wf(),
         {
-            let new_stack_cell = StackCell { elem, next: self.top_addr.load() };
+            let new_stack_cell = StackCell { elem, next: self.top_address.load() };
             let (permission_guarded_new_stack_cell, Tracked(new_stack_cell_permission)) = PPtr::new(
                 new_stack_cell,
             );
 
             let mut push_result =
                 atomic_with_ghost!(
-                self.top_addr => compare_exchange(
+                self.top_address => compare_exchange(
                     permission_guarded_new_stack_cell.read(Tracked(&new_stack_cell_permission)).next,
                     permission_guarded_new_stack_cell.addr()
                 );
@@ -425,9 +425,9 @@ impl TreiberStack {
             let tracked stack_head_witness;
             let tracked stack_cell_permission_reference;
 
-            let mut top_addr =
+            let mut top_address =
                 atomic_with_ghost!{
-                self.top_addr => load();
+                self.top_address => load();
                 returning addr;
 
                 ghost points_to_inv => {
@@ -435,7 +435,7 @@ impl TreiberStack {
                 }
             };
 
-            if top_addr == self.base_address {
+            if top_address == self.base_address {
                 return None;
             }
             proof {
@@ -447,13 +447,13 @@ impl TreiberStack {
                 );
             }
 
-            let permissioned_pointer = PPtr::<StackCell>::from_addr(top_addr);
+            let permissioned_pointer = PPtr::<StackCell>::from_addr(top_address);
             let head_read = permissioned_pointer.read(Tracked(stack_cell_permission_reference));
 
             let mut new_stack_head_address_result =
                 atomic_with_ghost!{
-                self.top_addr => compare_exchange(
-                    top_addr,
+                self.top_address => compare_exchange(
+                    top_address,
                     head_read.next
                 );
                 update current_stack_head_address -> new_stack_head_address;

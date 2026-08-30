@@ -375,33 +375,33 @@ impl TreiberStack {
                 );
                 returning previous_head_address_result;
 
-                ghost points_to_inv => {
+                ghost atomic_tokens => {
                     if let Ok(_) = previous_head_address_result {
 
                         // Proving that there does not already exist a permission for the cell in the TSM (or our tokens by extension):
-                        if points_to_inv.witnesses@.dom().contains(new_stack_cell_permission.addr()) {
-                            let tracked witness_token = points_to_inv.witnesses.tracked_borrow(new_stack_cell_permission.addr());
+                        if atomic_tokens.witnesses@.dom().contains(new_stack_cell_permission.addr()) {
+                            let tracked witness_token = atomic_tokens.witnesses.tracked_borrow(new_stack_cell_permission.addr());
                             let tracked stack_cell_permission_reference = self.instance.get_permission_reference(witness_token.key(), witness_token.value(), &witness_token);
                             new_stack_cell_permission.is_distinct(stack_cell_permission_reference);
                             assert(false);
                         }
 
-                        let ghost pre_current_stack_addresses = Ghost(points_to_inv.current_stack_addresses@.value());
+                        let ghost pre_current_stack_addresses = Ghost(atomic_tokens.current_stack_addresses@.value());
 
                         let tracked witness_token = self.instance.push(
                             new_stack_cell_permission,
-                            &mut points_to_inv.current_stack_addresses,
-                            &mut points_to_inv.addresses,
+                            &mut atomic_tokens.current_stack_addresses,
+                            &mut atomic_tokens.addresses,
                             new_stack_cell_permission
                         );
 
                         assert(pre_current_stack_addresses@ =~= pre_current_stack_addresses.push(witness_token.value().addr()).drop_last());
 
                         // Insert the witness token for the new stack cell into our map:
-                        points_to_inv.witnesses.tracked_insert(witness_token.key(), witness_token);
+                        atomic_tokens.witnesses.tracked_insert(witness_token.key(), witness_token);
 
                         // The push correctly updated our view of the stack:
-                        assert(points_to_inv.current_stack_addresses.value().last() == witness_token.key());
+                        assert(atomic_tokens.current_stack_addresses.value().last() == witness_token.key());
                     }
                 }
             );
@@ -430,8 +430,8 @@ impl TreiberStack {
                 self.top_address => load();
                 returning addr;
 
-                ghost points_to_inv => {
-                    stack_head_witness = *points_to_inv.witnesses.tracked_borrow(addr);
+                ghost atomic_tokens => {
+                    stack_head_witness = *atomic_tokens.witnesses.tracked_borrow(addr);
                 }
             };
 
@@ -459,18 +459,18 @@ impl TreiberStack {
                 update current_stack_head_address -> new_stack_head_address;
                 returning previous_head_address_result;
 
-                ghost points_to_inv => {
+                ghost atomic_tokens => {
                     if let Ok(_) = previous_head_address_result {
                         // There is a witness token for new_stack_head_address:
                         self.instance.have_witness_after_pop(
                             stack_head_witness.key(),
                             stack_head_witness.value(),
-                            &points_to_inv.addresses,
+                            &atomic_tokens.addresses,
                             &stack_head_witness
                         );
 
                         // Assert that the witness token for the current stack head, has next_address == new_stack_head_address:
-                        let tracked possible_second_old_stack_head_witness = points_to_inv.witnesses.tracked_borrow(current_stack_head_address);
+                        let tracked possible_second_old_stack_head_witness = atomic_tokens.witnesses.tracked_borrow(current_stack_head_address);
                         self.instance.same_address_implies_same_permission(
                             stack_head_witness.value(),
                             possible_second_old_stack_head_witness.value(),
@@ -479,12 +479,12 @@ impl TreiberStack {
                         );
 
                         // This assert is are trivial, but we need to disharge them:
-                        assert(points_to_inv.current_stack_addresses.value() =~= points_to_inv.current_stack_addresses.value().drop_last().push(stack_head_witness.value().addr()));
+                        assert(atomic_tokens.current_stack_addresses.value() =~= atomic_tokens.current_stack_addresses.value().drop_last().push(stack_head_witness.value().addr()));
 
                         self.instance.pop(
                             stack_head_witness.value(),
-                            &mut points_to_inv.current_stack_addresses,
-                            &mut points_to_inv.popped_addresses,
+                            &mut atomic_tokens.current_stack_addresses,
+                            &mut atomic_tokens.popped_addresses,
                             &stack_head_witness
                         );
                     }

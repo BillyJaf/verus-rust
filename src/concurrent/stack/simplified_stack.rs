@@ -221,11 +221,11 @@ tokenized_state_machine!{
     }
 }
 
-pub struct AtomicTokens {
-    pub current_stack_addresses: Tracked<machine::current_stack_addresses>,
-    pub popped_addresses: Tracked<machine::popped_addresses>,
-    pub witnesses: Tracked<Map<StackCellAddress, machine::witnesses>>,
-    pub addresses: Tracked<machine::addresses>,
+pub tracked struct AtomicTokens {
+    pub tracked current_stack_addresses: machine::current_stack_addresses,
+    pub tracked popped_addresses: machine::popped_addresses,
+    pub tracked witnesses: Map<StackCellAddress, machine::witnesses>,
+    pub tracked addresses: machine::addresses,
 }
 
 #[derive(Copy, Clone)]
@@ -332,13 +332,13 @@ impl TreiberStack {
             Tracked(witnesses),
         ) = machine::Instance::initialize(base_perm, permissions);
 
-        let tracked witness_tokens = witnesses.into_map();
+        let tracked witnesses = witnesses.into_map();
 
-        let atomic_tokens = AtomicTokens {
-            current_stack_addresses: Tracked(current_stack_addresses),
-            popped_addresses: Tracked(popped_addresses),
-            witnesses: Tracked(witness_tokens),
-            addresses: Tracked(addresses),
+        let tracked atomic_tokens = AtomicTokens {
+            current_stack_addresses,
+            popped_addresses,
+            witnesses,
+            addresses
         };
 
         assert(current_stack_addresses.value().first() == base_address);
@@ -379,14 +379,14 @@ impl TreiberStack {
                     if let Ok(_) = previous_head_address_result {
 
                         // Proving that there does not already exist a permission for the cell in the TSM (or our tokens by extension):
-                        if atomic_tokens.witnesses@.dom().contains(new_stack_cell_permission.addr()) {
+                        if atomic_tokens.witnesses.dom().contains(new_stack_cell_permission.addr()) {
                             let tracked witness_token = atomic_tokens.witnesses.tracked_borrow(new_stack_cell_permission.addr());
                             let tracked stack_cell_permission_reference = self.instance.get_permission_reference(witness_token.key(), witness_token.value(), &witness_token);
                             new_stack_cell_permission.is_distinct(stack_cell_permission_reference);
                             assert(false);
                         }
 
-                        let ghost pre_current_stack_addresses = Ghost(atomic_tokens.current_stack_addresses@.value());
+                        let ghost pre_current_stack_addresses = Ghost(atomic_tokens.current_stack_addresses.value());
 
                         let tracked witness_token = self.instance.push(
                             new_stack_cell_permission,

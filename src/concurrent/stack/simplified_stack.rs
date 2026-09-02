@@ -450,7 +450,7 @@ impl TreiberStack {
             let permissioned_pointer = PPtr::<StackCell>::from_addr(top_address);
             let top_stack_cell = permissioned_pointer.read(Tracked(stack_cell_permission_reference));
 
-            let mut new_stack_head_address_result =
+            let new_stack_head_address_result =
                 atomic_with_ghost!{
                 self.top_address => compare_exchange(
                     top_address,

@@ -367,7 +367,7 @@ impl TreiberStack {
                 new_stack_cell,
             );
 
-            let mut push_result =
+            let push_result =
                 atomic_with_ghost!(
                 self.top_address => compare_exchange(
                     permission_guarded_new_stack_cell.read(Tracked(&new_stack_cell_permission)).next_address,
@@ -425,7 +425,7 @@ impl TreiberStack {
             let tracked stack_head_witness;
             let tracked stack_cell_permission_reference;
 
-            let mut top_address =
+            let top_address =
                 atomic_with_ghost!{
                 self.top_address => load();
                 returning addr;

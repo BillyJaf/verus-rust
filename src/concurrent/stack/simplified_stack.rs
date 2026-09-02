@@ -222,10 +222,10 @@ tokenized_state_machine!{
 }
 
 pub tracked struct AtomicTokens {
-    pub tracked current_stack_addresses: machine::current_stack_addresses,
-    pub tracked popped_addresses: machine::popped_addresses,
-    pub tracked witnesses: Map<StackCellAddress, machine::witnesses>,
-    pub tracked addresses: machine::addresses,
+    pub current_stack_addresses: machine::current_stack_addresses,
+    pub popped_addresses: machine::popped_addresses,
+    pub witnesses: Map<StackCellAddress, machine::witnesses>,
+    pub addresses: machine::addresses,
 }
 
 #[derive(Copy, Clone)]

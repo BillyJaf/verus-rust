@@ -448,13 +448,13 @@ impl TreiberStack {
             }
 
             let permissioned_pointer = PPtr::<StackCell>::from_addr(top_address);
-            let head_read = permissioned_pointer.read(Tracked(stack_cell_permission_reference));
+            let top_stack_cell = permissioned_pointer.read(Tracked(stack_cell_permission_reference));
 
             let mut new_stack_head_address_result =
                 atomic_with_ghost!{
                 self.top_address => compare_exchange(
                     top_address,
-                    head_read.next_address
+                    top_stack_cell.next_address
                 );
                 update current_stack_head_address -> new_stack_head_address;
                 returning previous_head_address_result;
@@ -492,7 +492,7 @@ impl TreiberStack {
             };
 
             if let Ok(new_stack_head_address) = new_stack_head_address_result {
-                return Some(head_read.elem);
+                return Some(top_stack_cell.elem);
             }
         }
     }

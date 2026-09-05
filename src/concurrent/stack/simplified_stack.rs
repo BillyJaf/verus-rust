@@ -183,14 +183,6 @@ tokenized_state_machine!{
         }
 
         property!{
-            have_witness_after_pop(stack_cell_address: StackCellAddress, stack_cell_permission: PointsTo<StackCell>) {
-                require(stack_cell_address != pre.base_address);
-                have witnesses >= [stack_cell_address => stack_cell_permission];
-                assert(pre.addresses.contains(stack_cell_permission.value().next_address));
-            }
-        }
-
-        property!{
             same_address_implies_same_permission(stack_cell_permission_1: PointsTo<StackCell>, stack_cell_permission_2: PointsTo<StackCell>) {
                 require(stack_cell_permission_1.addr() == stack_cell_permission_2.addr());
                 have witnesses >= [stack_cell_permission_1.addr() => stack_cell_permission_1];
@@ -461,25 +453,17 @@ impl TreiberStack {
 
                 ghost atomic_tokens => {
                     if let Ok(_) = previous_head_address_result {
-                        // There is a witness token for new_stack_head_address:
-                        self.instance.have_witness_after_pop(
-                            stack_head_witness.key(),
-                            stack_head_witness.value(),
-                            &atomic_tokens.addresses,
-                            &stack_head_witness
-                        );
-
-                        // Assert that the witness token for the current stack head, has next_address == new_stack_head_address:
-                        let tracked possible_second_old_stack_head_witness = atomic_tokens.witnesses.tracked_borrow(current_stack_head_address);
+                        // Assert that the witness token is still in the map:
+                        let tracked equal_witness = *atomic_tokens.witnesses.tracked_borrow(current_stack_head_address);
                         self.instance.same_address_implies_same_permission(
                             stack_head_witness.value(),
-                            possible_second_old_stack_head_witness.value(),
+                            equal_witness.value(),
                             &stack_head_witness,
-                            &possible_second_old_stack_head_witness
+                            &equal_witness
                         );
 
                         // This assert is are trivial, but we need to disharge them:
-                        assert(atomic_tokens.current_stack_addresses.value() =~= atomic_tokens.current_stack_addresses.value().drop_last().push(stack_head_witness.value().addr()));
+                        assert(atomic_tokens.current_stack_addresses.value() =~= atomic_tokens.current_stack_addresses.value().drop_last().push(current_stack_head_address));
 
                         self.instance.pop(
                             stack_head_witness.value(),

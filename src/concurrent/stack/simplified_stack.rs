@@ -11,26 +11,6 @@ global layout StackCell is size == 16;
 
 type StackCellAddress = usize;
 
-pub enum StackCellContents {
-    Elem(u32),
-    Base,
-}
-
-pub enum Operation {
-    Pop(Option<u32>),
-    Push(u32),
-    InitBase,
-}
-
-impl Operation {
-    pub open spec fn is_empty_pop(&self) -> bool {
-        match self {
-            Operation::Pop(None) => true,
-            _ => false,
-        }
-    }
-}
-
 tokenized_state_machine!{
     machine {
         fields {

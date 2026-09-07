@@ -9,10 +9,7 @@ use vstd::{
     prelude::*,
     thread::*,
     pervasive::*, 
-    cell::pcell_maybe_uninit::{
-        PCell,
-        PointsTo
-    },
+    cell::pcell_maybe_uninit::*,
     seq_lib::*,
 };
 
@@ -23,7 +20,6 @@ pub struct ListHead {
     pub cons_perm: Option<PointsTo<Cons>>
 }
 
-#[verifier::accept_recursive_types]
 tokenized_state_machine!{
     machine {
         fields {
@@ -32,6 +28,85 @@ tokenized_state_machine!{
 
             #[sharding(map)]
             pub list_representation: Map<PointsTo<Cons>, Option<PointsTo<Cons>>>,
+        }
+
+        #[invariant]
+        pub fn empty_list_inv(&self) -> bool {
+            self.list_head.cons_perm.is_none() <==> self.list_representation.is_empty()
+        }
+
+        #[invariant]
+        pub fn non_empty_list_inv(&self) -> bool {
+            self.list_head.cons_perm.is_some() <==> self.list_representation.contains_key(self.list_head.cons_perm.unwrap())
+        }
+
+        #[invariant]
+        pub fn ordered_key_value_pairs_inv(&self) -> bool {
+            forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>| #![auto]
+                (
+                    self.list_representation.contains_pair(points_to_1, Some(points_to_2))
+                ) ==>
+                points_to_1.value().car < points_to_2.value().car
+        }
+
+        #[invariant]
+        pub fn list_representation_map_is_complete(&self) -> bool {
+            forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>| #![auto]
+                (
+                    self.list_representation.contains_pair(points_to_1, Some(points_to_2))
+                ) ==>
+                self.list_representation.contains_key(points_to_2)
+        }
+
+        #[invariant]
+        pub fn largest_cons_points_to_none_inv(&self) -> bool {
+            forall |points_to_1: PointsTo<Cons>| #![auto]
+                (
+                    self.list_representation.contains_pair(points_to_1, None)
+                ) ==> (
+                    forall |points_to_2: PointsTo<Cons>| #![auto]
+                        (
+                            self.list_representation.contains_key(points_to_2) &&
+                            points_to_2 != points_to_1
+                        ) ==> points_to_1.value().car > points_to_2.value().car
+                )
+        }
+
+        #[invariant]
+        pub fn list_head_has_smallest_cons_inv(&self) -> bool {
+            forall |points_to: PointsTo<Cons>| #![auto]
+            (
+                self.list_head.cons_perm.is_some() &&
+                self.list_representation.contains_key(points_to) &&
+                points_to != self.list_head.cons_perm.unwrap()
+            ) ==>
+            self.list_head.cons_perm.unwrap().value().car < points_to.value().car
+        }
+
+        #[invariant]
+        pub fn unique_values_inv(&self) -> bool {   
+            forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>, option_points_to: Option<PointsTo<Cons>>| #![auto]
+                (
+                    self.list_representation.contains_pair(points_to_1, option_points_to) &&
+                    self.list_representation.contains_pair(points_to_2, option_points_to)
+                ) ==>
+                (
+                    points_to_1 == points_to_2
+                )      
+        }
+
+        #[invariant]
+        pub fn key_exclusion_inv(&self) -> bool {   
+            forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>| #![auto] 
+                (
+                    self.list_representation.contains_pair(points_to_1, Some(points_to_2))
+                ) ==> (
+                    forall |points_to_3: PointsTo<Cons>| #![auto] 
+                        (
+                            points_to_1.value().car < points_to_3.value().car &&
+                            points_to_3.value().car < points_to_2.value().car
+                        ) ==> !self.list_representation.contains_key(points_to_3)
+                )      
         }
 
         init!{
@@ -45,65 +120,458 @@ tokenized_state_machine!{
         // Insert
 
         transition!{
-            empty_list_insert(lower_car: PointsTo<Nil>, insert_car: PointsTo<Cons>)
+            empty_list_insert(nil_perm: PointsTo<Nil>, insert_perm: PointsTo<Cons>)
             {   
+                require(pre.list_head.cons_perm.is_none());
                 
+                update list_head = ListHead { nil_perm, cons_perm: Some(insert_perm) };
+                add list_representation += [insert_perm => None];
             }
         }
 
         transition!{
-            insert_at_head(lower_car: PointsTo<Nil>, insert_car: PointsTo<Cons>, upper_car: PointsTo<Cons>)
+            insert_at_head(nil_perm: PointsTo<Nil>, insert_perm: PointsTo<Cons>, upper_perm: PointsTo<Cons>)
             {   
+                require(pre.list_head.nil_perm == nil_perm);
+                require(pre.list_head.cons_perm == Some(upper_perm));
+                require(insert_perm.value().car < upper_perm.value().car);
                 
+                update list_head = ListHead { nil_perm, cons_perm: Some(insert_perm) };
+                add list_representation += [insert_perm => Some(upper_perm)];
             }
         }
 
         transition!{
-            insert(lower_car: PointsTo<Cons>, insert_car: PointsTo<Cons>, upper_car: PointsTo<Cons>)
+            insert(lower_perm: PointsTo<Cons>, insert_perm: PointsTo<Cons>, upper_perm: PointsTo<Cons>)
             {   
-                
+                require(lower_perm.value().car < insert_perm.value().car);
+                require(insert_perm.value().car < upper_perm.value().car);
+
+                remove list_representation -= [lower_perm => Some(upper_perm)];
+                add list_representation += [lower_perm => Some(insert_perm)];
+                add list_representation += [insert_perm => Some(upper_perm)];
             }
         }
 
         transition!{
-            insert_at_tail(lower_car: PointsTo<Cons>, insert_car: PointsTo<Cons>)
+            insert_at_tail(lower_perm: PointsTo<Cons>, insert_perm: PointsTo<Cons>)
             {   
+                require(lower_perm.value().car < insert_perm.value().car);
                 
+                remove list_representation -= [lower_perm => None];
+                add list_representation += [lower_perm => Some(insert_perm)];
+                add list_representation += [insert_perm => None];
             }
         }
 
         // Delete
 
         transition!{
-            one_elem_delete(lower_car: PointsTo<Nil>, delete_car: PointsTo<Cons>)
+            empty_delete(list_head: ListHead)
             {   
-                
+                require(pre.list_head == list_head);
+                require(pre.list_head.cons_perm.is_none());
             }
         }
 
         transition!{
-            delete_at_head(lower_car: PointsTo<Nil>, delete_car: PointsTo<Cons>, upper_car: PointsTo<Cons>)
+            delete_at_head(list_head: ListHead, delete_perm: PointsTo<Cons>)
             {   
-                
+                require(pre.list_head == list_head);
+                require(pre.list_head.cons_perm.is_some());
+                require(pre.list_head.cons_perm.unwrap() == delete_perm);
+
+                remove list_representation -= [delete_perm => let option_cons_perm];
+                update list_head = ListHead { nil_perm: list_head.nil_perm, cons_perm: option_cons_perm };
             }
         }
 
         transition!{
-            delete(lower_car: PointsTo<Cons>, delete_car: PointsTo<Cons>, upper_car: PointsTo<Cons>)
+            delete(lower_perm: PointsTo<Cons>, delete_perm: PointsTo<Cons>)
             {   
-                
-            }
-        }
-
-        transition!{
-            delete_at_tail(lower_car: PointsTo<Cons>, delete_car: PointsTo<Cons>)
-            {   
-                
+                remove list_representation -= [delete_perm => let option_cons_perm];
+                remove list_representation -= [lower_perm => Some(delete_perm)];
+                add list_representation += [lower_perm => option_cons_perm];
             }
         }
 
         #[inductive(initialize)]
         fn initialize_inductive(post: Self, nil_perm: PointsTo<Nil>) {
+        }
+
+        #[inductive(empty_list_insert)]
+        fn empty_list_insert_inductive(pre: Self, post: Self, nil_perm: PointsTo<Nil>, insert_perm: PointsTo<Cons>) { }
+       
+        #[inductive(insert_at_head)]
+        fn insert_at_head_inductive(pre: Self, post: Self, nil_perm: PointsTo<Nil>, insert_perm: PointsTo<Cons>, upper_perm: PointsTo<Cons>) {
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, Some(points_to_2))
+                ) ==>
+                points_to_1.value().car < points_to_2.value().car
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, Some(points_to_2))
+                ) ==>
+                post.list_representation.contains_key(points_to_2)
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, None)
+                ) ==> (
+                    forall |points_to_2: PointsTo<Cons>| #![auto]
+                        (
+                            post.list_representation.contains_key(points_to_2) &&
+                            points_to_2 != points_to_1
+                        ) ==> points_to_1.value().car > points_to_2.value().car
+                )
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>, option_points_to: Option<PointsTo<Cons>>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, option_points_to) &&
+                    post.list_representation.contains_pair(points_to_2, option_points_to)
+                ) ==>
+                (
+                    points_to_1 == points_to_2
+                )    
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>| #![auto] 
+                (
+                    post.list_representation.contains_pair(points_to_1, Some(points_to_2))
+                ) ==> (
+                    forall |points_to_3: PointsTo<Cons>| #![auto] 
+                        (
+                            points_to_1.value().car < points_to_3.value().car &&
+                            points_to_3.value().car < points_to_2.value().car
+                        ) ==> !post.list_representation.contains_key(points_to_3)
+                )      
+            );
+        }
+       
+        #[inductive(insert)]
+        fn insert_inductive(pre: Self, post: Self, lower_perm: PointsTo<Cons>, insert_perm: PointsTo<Cons>, upper_perm: PointsTo<Cons>) {
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, Some(points_to_2))
+                ) ==>
+                points_to_1.value().car < points_to_2.value().car
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, None)
+                ) ==> (
+                    forall |points_to_2: PointsTo<Cons>| #![auto]
+                        (
+                            post.list_representation.contains_key(points_to_2) &&
+                            points_to_2 != points_to_1
+                        ) ==> points_to_1.value().car > points_to_2.value().car
+                )
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, Some(points_to_2))
+                ) ==>
+                post.list_representation.contains_key(points_to_2)
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>, option_points_to: Option<PointsTo<Cons>>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, option_points_to) &&
+                    post.list_representation.contains_pair(points_to_2, option_points_to)
+                ) ==>
+                (
+                    points_to_1 == points_to_2
+                )    
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>| #![auto] 
+                (
+                    post.list_representation.contains_pair(points_to_1, Some(points_to_2))
+                ) ==> (
+                    forall |points_to_3: PointsTo<Cons>| #![auto] 
+                        (
+                            points_to_1.value().car < points_to_3.value().car &&
+                            points_to_3.value().car < points_to_2.value().car
+                        ) ==> !post.list_representation.contains_key(points_to_3)
+                )      
+            );
+        }
+       
+        #[inductive(insert_at_tail)]
+        fn insert_at_tail_inductive(pre: Self, post: Self, lower_perm: PointsTo<Cons>, insert_perm: PointsTo<Cons>) {
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, Some(points_to_2))
+                ) ==>
+                points_to_1.value().car < points_to_2.value().car
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, Some(points_to_2))
+                ) ==>
+                post.list_representation.contains_key(points_to_2)
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, None)
+                ) ==> (
+                    forall |points_to_2: PointsTo<Cons>| #![auto]
+                        (
+                            post.list_representation.contains_key(points_to_2) &&
+                            points_to_2 != points_to_1
+                        ) ==> points_to_1.value().car > points_to_2.value().car
+                )
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>| #![auto] 
+                (
+                    post.list_representation.contains_pair(points_to_1, Some(points_to_2))
+                ) ==> (
+                    forall |points_to_3: PointsTo<Cons>| #![auto] 
+                        (
+                            points_to_1.value().car < points_to_3.value().car &&
+                            points_to_3.value().car < points_to_2.value().car
+                        ) ==> !post.list_representation.contains_key(points_to_3)
+                )      
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>, option_points_to: Option<PointsTo<Cons>>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, option_points_to) &&
+                    post.list_representation.contains_pair(points_to_2, option_points_to)
+                ) ==>
+                (
+                    points_to_1 == points_to_2
+                )    
+            );
+        }
+       
+        #[inductive(delete_at_head)]
+        fn delete_at_head_inductive(pre: Self, post: Self, list_head: ListHead, delete_perm: PointsTo<Cons>) {
+            assume(post.list_head.cons_perm.is_none() <==> post.list_representation.is_empty());
+            assume(post.list_head.cons_perm.is_some() <==> post.list_representation.contains_key(post.list_head.cons_perm.unwrap()));
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, Some(points_to_2))
+                ) ==>
+                points_to_1.value().car < points_to_2.value().car
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, Some(points_to_2))
+                ) ==>
+                post.list_representation.contains_key(points_to_2)
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, None)
+                ) ==> (
+                    forall |points_to_2: PointsTo<Cons>| #![auto]
+                        (
+                            post.list_representation.contains_key(points_to_2) &&
+                            points_to_2 != points_to_1
+                        ) ==> points_to_1.value().car > points_to_2.value().car
+                )
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>, option_points_to: Option<PointsTo<Cons>>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, option_points_to) &&
+                    post.list_representation.contains_pair(points_to_2, option_points_to)
+                ) ==>
+                (
+                    points_to_1 == points_to_2
+                )    
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>| #![auto] 
+                (
+                    post.list_representation.contains_pair(points_to_1, Some(points_to_2))
+                ) ==> (
+                    forall |points_to_3: PointsTo<Cons>| #![auto] 
+                        (
+                            points_to_1.value().car < points_to_3.value().car &&
+                            points_to_3.value().car < points_to_2.value().car
+                        ) ==> !post.list_representation.contains_key(points_to_3)
+                )      
+            );
+
+            assume(
+                forall |points_to: PointsTo<Cons>| #![auto]
+                (
+                    post.list_head.cons_perm.is_some() &&
+                    post.list_representation.contains_key(points_to) &&
+                    points_to != post.list_head.cons_perm.unwrap()
+                ) ==>
+                post.list_head.cons_perm.unwrap().value().car < points_to.value().car
+            );
+        }
+       
+        #[inductive(delete)]
+        fn delete_inductive(pre: Self, post: Self, lower_perm: PointsTo<Cons>, delete_perm: PointsTo<Cons>) {
+            assume(post.list_head.cons_perm.is_none() <==> post.list_representation.is_empty());
+            assume(post.list_head.cons_perm.is_some() <==> post.list_representation.contains_key(post.list_head.cons_perm.unwrap()));
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, Some(points_to_2))
+                ) ==>
+                points_to_1.value().car < points_to_2.value().car
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, Some(points_to_2))
+                ) ==>
+                post.list_representation.contains_key(points_to_2)
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, None)
+                ) ==> (
+                    forall |points_to_2: PointsTo<Cons>| #![auto]
+                        (
+                            post.list_representation.contains_key(points_to_2) &&
+                            points_to_2 != points_to_1
+                        ) ==> points_to_1.value().car > points_to_2.value().car
+                )
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>, option_points_to: Option<PointsTo<Cons>>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, option_points_to) &&
+                    post.list_representation.contains_pair(points_to_2, option_points_to)
+                ) ==>
+                (
+                    points_to_1 == points_to_2
+                )    
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>| #![auto] 
+                (
+                    post.list_representation.contains_pair(points_to_1, Some(points_to_2))
+                ) ==> (
+                    forall |points_to_3: PointsTo<Cons>| #![auto] 
+                        (
+                            points_to_1.value().car < points_to_3.value().car &&
+                            points_to_3.value().car < points_to_2.value().car
+                        ) ==> !post.list_representation.contains_key(points_to_3)
+                )      
+            );
+
+            assume(
+                forall |points_to: PointsTo<Cons>| #![auto]
+                (
+                    post.list_head.cons_perm.is_some() &&
+                    post.list_representation.contains_key(points_to) &&
+                    points_to != post.list_head.cons_perm.unwrap()
+                ) ==>
+                post.list_head.cons_perm.unwrap().value().car < points_to.value().car
+            );
+        }
+
+        #[inductive(empty_delete)]
+        fn empty_delete_inductive(pre: Self, post: Self, list_head: ListHead) {
+            assume(post.list_head.cons_perm.is_none() <==> post.list_representation.is_empty());
+            assume(post.list_head.cons_perm.is_some() <==> post.list_representation.contains_key(post.list_head.cons_perm.unwrap()));
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, Some(points_to_2))
+                ) ==>
+                points_to_1.value().car < points_to_2.value().car
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, Some(points_to_2))
+                ) ==>
+                post.list_representation.contains_key(points_to_2)
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, None)
+                ) ==> (
+                    forall |points_to_2: PointsTo<Cons>| #![auto]
+                        (
+                            post.list_representation.contains_key(points_to_2) &&
+                            points_to_2 != points_to_1
+                        ) ==> points_to_1.value().car > points_to_2.value().car
+                )
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>, option_points_to: Option<PointsTo<Cons>>| #![auto]
+                (
+                    post.list_representation.contains_pair(points_to_1, option_points_to) &&
+                    post.list_representation.contains_pair(points_to_2, option_points_to)
+                ) ==>
+                (
+                    points_to_1 == points_to_2
+                )    
+            );
+
+            assume(
+                forall |points_to_1: PointsTo<Cons>, points_to_2: PointsTo<Cons>| #![auto] 
+                (
+                    post.list_representation.contains_pair(points_to_1, Some(points_to_2))
+                ) ==> (
+                    forall |points_to_3: PointsTo<Cons>| #![auto] 
+                        (
+                            points_to_1.value().car < points_to_3.value().car &&
+                            points_to_3.value().car < points_to_2.value().car
+                        ) ==> !post.list_representation.contains_key(points_to_3)
+                )      
+            );
+
+            assume(
+                forall |points_to: PointsTo<Cons>| #![auto]
+                (
+                    post.list_head.cons_perm.is_some() &&
+                    post.list_representation.contains_key(points_to) &&
+                    points_to != post.list_head.cons_perm.unwrap()
+                ) ==>
+                post.list_head.cons_perm.unwrap().value().car < points_to.value().car
+            );
         }
     }
 }
@@ -112,35 +580,35 @@ pub struct Nil {
     pub cdr: Option<Arc<LockedCons>>
 }
 
-pub tracked struct PermAndToken {
-    pub perm: PointsTo<Nil>,
-    pub map_token: machine::list_head
+pub tracked struct NilPermAndToken {
+    pub nil_perm: PointsTo<Nil>,
+    pub list_head: machine::list_head
 }
 
 struct_with_invariants!{
     pub struct LockedNil {
-        atomic: AtomicBool<_, Option<PermAndToken>, _>,
-        cell: PCell<Nil>,
+        atomic: AtomicBool<_, Option<NilPermAndToken>, _>,
+        nil_cell: PCell<Nil>,
         instance: Tracked<machine::Instance>,
     }
 
     spec fn wf(&self) -> bool 
     {
-        invariant on atomic with (cell, instance) is (v: bool, option_pat: Option<PermAndToken>) {
+        invariant on atomic with (nil_cell, instance) is (v: bool, option_pat: Option<NilPermAndToken>) {
             match option_pat {
                 None => v == true,
-                Some(pat) => {
+                Some(npat) => {
                     &&& v == false
-                    &&& pat.perm.is_init()
-                    &&& pat.perm.id() == cell.id()
-                    &&& pat.map_token.instance_id() == instance.id()
-                    &&& pat.map_token.value().nil_perm == pat.perm
-                    &&& (pat.map_token.value().cons_perm.is_none() <==> pat.perm.value().cdr.is_none()) 
-                    &&& (pat.map_token.value().cons_perm.is_some() ==> 
+                    &&& npat.nil_perm.is_init()
+                    &&& npat.nil_perm.id() == nil_cell.id()
+                    &&& npat.list_head.instance_id() == instance.id()
+                    &&& npat.list_head.value().nil_perm == npat.nil_perm
+                    &&& (npat.list_head.value().cons_perm.is_none() <==> npat.nil_perm.value().cdr.is_none()) 
+                    &&& (npat.list_head.value().cons_perm.is_some() ==> 
                             (
-                                pat.perm.value().cdr.unwrap().wf() &&
-                                // pat.perm.value().cdr.unwrap().view_instance() == instance &&
-                                pat.perm.value().cdr.unwrap().view_car() == pat.map_token.value().cons_perm.unwrap().value().car
+                                npat.nil_perm.value().cdr.unwrap().wf() &&
+                                 npat.nil_perm.value().cdr.unwrap().view_instance() == instance &&
+                                npat.nil_perm.value().cdr.unwrap().view_car() == npat.list_head.value().cons_perm.unwrap().value().car
                             )
                         )
                 }
@@ -149,199 +617,191 @@ struct_with_invariants!{
     }
 }
 
-// impl LockedNil {
-//     fn new() -> (locked_nil: Self)
-//         ensures 
-//             locked_nil.wf(),
-//     {
-//         let (cell, Tracked(perm)) = PCell::empty();
+impl LockedNil {
+    fn new() -> (locked_nil: Self)
+        ensures 
+            locked_nil.wf(),
+    {
+        let nil = Nil { cdr: None::<Arc<LockedCons>> };
+        let (nil_cell, Tracked(nil_perm)) = PCell::new(nil);
 
-//         let tracked (
-//             Tracked(instance),
-//             Tracked(list_representation)
-//         ) = machine::Instance::initialize();
+        let tracked (
+            Tracked(instance),
+            Tracked(list_head),
+            Tracked(list_representation)
+        ) = machine::Instance::initialize(nil_perm);
 
-//         let tracked map_token;
-//         proof {
-//             map_token = list_representation.remove(None);
-//         }
+        let tracked pat = NilPermAndToken {
+            nil_perm,
+            list_head
+        };
 
-//         let node = Nil { cdr: None::<Arc<LockedCons>>, map_token: Tracked(map_token) };
-//         let (cell, Tracked(perm)) = PCell::new(node);
+        let atomic = AtomicBool::new(Ghost((nil_cell, Tracked(instance))), false, Tracked(Some(pat)));
+        Self { 
+            atomic, 
+            nil_cell, 
+            instance: Tracked(instance)
+        }
+    }
 
+    fn acquire_lock(&self) -> (npat: Tracked<NilPermAndToken>)
+        requires 
+            self.wf(),
+        ensures 
+            npat.nil_perm.is_init(),
+            npat.nil_perm.id() == self.nil_cell.id(),
+            npat.list_head.instance_id() == self.instance.id(),
+            npat.list_head.value().nil_perm == npat.nil_perm,
+            (npat.list_head.value().cons_perm.is_none() <==> npat.nil_perm.value().cdr.is_none()) ,
+            (npat.list_head.value().cons_perm.is_some() ==> 
+                (
+                    npat.nil_perm.value().cdr.unwrap().wf() &&
+                    npat.nil_perm.value().cdr.unwrap().view_instance() == self.instance &&
+                    npat.nil_perm.value().cdr.unwrap().view_car() == npat.list_head.value().cons_perm.unwrap().value().car
+                )
+            ),
+            self.wf()
+    {
+        loop
+            invariant self.wf(),
+        {
+            let tracked mut points_to_opt = None;
+            let res = atomic_with_ghost!(
+                &self.atomic => compare_exchange(false, true);
+                ghost points_to_inv => {
+                    tracked_swap(&mut points_to_opt, &mut points_to_inv);
+                }
+            );
+            if res.is_ok() {
+                return Tracked(points_to_opt.tracked_unwrap());
+            }
+        }
+    }
 
-//         let atomic = AtomicBool::new(Ghost((cell, Tracked(instance))), false, Tracked(Some(perm)));
-//         Self { 
-//             atomic, 
-//             cell, 
-//             instance: Tracked(instance)
-//         }
-//     }
+    fn release_lock(&self, npat: Tracked<NilPermAndToken>)
+        requires
+            npat.nil_perm.is_init(),
+            npat.nil_perm.id() == self.nil_cell.id(),
+            npat.list_head.instance_id() == self.instance.id(),
+            npat.list_head.value().nil_perm == npat.nil_perm,
+            (npat.list_head.value().cons_perm.is_none() <==> npat.nil_perm.value().cdr.is_none()) ,
+            (npat.list_head.value().cons_perm.is_some() ==> 
+                (
+                    npat.nil_perm.value().cdr.unwrap().wf() &&
+                    npat.nil_perm.value().cdr.unwrap().view_instance() == self.instance &&
+                    npat.nil_perm.value().cdr.unwrap().view_car() == npat.list_head.value().cons_perm.unwrap().value().car
+                )
+            ),
+            self.wf()
+        ensures
+            self.wf()
+    {
+        atomic_with_ghost!(
+            &self.atomic => store(false);
+            ghost points_to_inv => {
+                points_to_inv = Some(npat.get());
+            }
+        );
+    }
 
-//     fn acquire_lock(&self) -> (points_to: Tracked<PointsTo<Nil>>)
-//         requires 
-//             self.wf(),
-//         ensures 
-//             points_to.is_init(),
-//             points_to.id() == self.cell.id(),
-//             points_to.value().map_token.instance_id() == self.instance.id(),
-//             points_to.value().map_token.key() == None::<u32>,
-//             (points_to.value().map_token.value().is_none() <==> points_to.value().cdr.is_none()),
-//             (points_to.value().map_token.value().is_some() ==> 
-//                 (
-//                     points_to.value().cdr.unwrap().wf() &&
-//                     points_to.value().cdr.unwrap().view_instance() == self.instance &&
-//                     points_to.value().cdr.unwrap().view_car() == points_to.value().map_token.value().unwrap()
-//                 )
-//             ),
-//             self.wf()
-//     {
-//         loop
-//             invariant self.wf(),
-//         {
-//             let tracked mut points_to_opt = None;
-//             let res = atomic_with_ghost!(
-//                 &self.atomic => compare_exchange(false, true);
-//                 ghost points_to_inv => {
-//                     tracked_swap(&mut points_to_opt, &mut points_to_inv);
-//                 }
-//             );
-//             if res.is_ok() {
-//                 return Tracked(points_to_opt.tracked_unwrap());
-//             }
-//         }
-//     }
+    fn insert(self: Arc<Self>, insert_car: u32)
+        requires
+            self.wf()
+        ensures
+            self.wf()
+    {
+        // Acquire the lock for the nil node, and view the data inside (without taking)
+        let mut nil_perm_and_token = self.acquire_lock();
+        let nil_view = self.nil_cell.borrow(Tracked(&mut nil_perm_and_token.nil_perm));
 
-    // fn release_lock(&self, points_to: Tracked<PointsTo<Nil>>)
-    //     requires
-    //         self.wf(),
-    //         points_to.is_init(),
-    //         points_to.id() == self.cell.id(),
-    //         points_to.value().map_token.instance_id() == self.instance.id(),
-    //         points_to.value().map_token.key() == None::<u32>,
-    //         (points_to.value().map_token.value().is_none() <==> points_to.value().cdr.is_none()),
-    //         (points_to.value().map_token.value().is_some() ==> 
-    //             (
-    //                 points_to.value().cdr.unwrap().wf() &&
-    //                 points_to.value().cdr.unwrap().view_instance() == self.instance &&
-    //                 points_to.value().cdr.unwrap().view_car() == points_to.value().map_token.value().unwrap()
-    //             )
-    //         )
-    //     ensures
-    //         self.wf()
-    // {
-    //     atomic_with_ghost!(
-    //         &self.atomic => store(false);
-    //         ghost points_to_inv => {
-    //             points_to_inv = Some(points_to.get());
-    //         }
-    //     );
-    // }
-// }
-//     fn insert(self: Arc<Self>, insert_car_raw: u32)
-//         requires
-//             self.wf()
-//         ensures
-//             self.wf()
-//     {
-//         // Acquire the lock for the nil node, and view the data inside (without taking)
-//         let mut nil_perm = self.acquire_lock();
-//         let nil_view = self.cell.borrow(Tracked(nil_perm.borrow_mut()));
-//         let insert_car = NodeData::CAR(insert_car_raw);
+        // If the nil cdr is none, then we must insert here - at the tail
+        if (nil_view.cdr.is_none()) {
+            let tracked map_token;
 
-//         // If the nil cdr is none, then we must insert here - at the tail
-//         if (nil_view.cdr.is_none()) {
+            let (locked_cons, Tracked(cons_perm)) = LockedCons::new(
+                insert_car,  
+                None::<Arc<LockedCons>>, 
+                self.instance.clone()
+            );
+            let arc_locked_cons = Arc::new(locked_cons);
 
-//             let mut nil = self.cell.take(Tracked(nil_perm.borrow_mut()));
+            let mut nil = self.nil_cell.take(Tracked(&mut nil_perm_and_token.nil_perm));
+            nil.cdr = Some(arc_locked_cons.clone());
+            self.nil_cell.put(Tracked(&mut nil_perm_and_token.nil_perm), nil);
 
-//             let tracked token_tuple;
-//             let tracked updated_nil_token;
-//             let tracked cons_token;
+            proof {
+                map_token = self.instance.empty_list_insert(
+                    nil_perm_and_token@.nil_perm,
+                    cons_perm,
+                    &mut nil_perm_and_token.list_head
+                );
+            }
 
-//             proof {
-//                 token_tuple = self.instance.borrow().insert(
-//                     self.view_car(), 
-//                     insert_car, 
-//                     nil.map_token.value(), 
-//                     nil.map_token.get()
-//                 );
-//                 updated_nil_token = token_tuple.0.get();
-//                 cons_token = token_tuple.1.get();
-//             }
+            self.release_lock(nil_perm_and_token);
+            arc_locked_cons.release_lock(Tracked(ConsPermAndToken { cons_perm, map_token }));
+            return;
+        } 
+        // else {
+        //     // We check if we need to insert inbetween Nil and the first Cons
+        //     let first_locked_cons = nil_view.cdr.as_ref().unwrap().clone();
+        //     let mut first_cons_perm = first_locked_cons.acquire_lock();
+        //     let first_cons_view = first_locked_cons.cell.borrow(Tracked(first_cons_perm.borrow_mut()));
 
-//             let locked_cons = LockedCons::new(
-//                 insert_car_raw, 
-//                 Tracked(cons_token), 
-//                 None::<Arc<LockedCons>>, 
-//                 self.instance.clone()
-//             );
+        //     // If a Cons with this value already exists:
+        //     if (insert_car_raw == first_cons_view.car) {
+        //         // Return early and do nothing - the Cons exists.
+        //         self.release_lock(nil_perm);
+        //         first_locked_cons.release_lock(first_cons_perm);
+        //         return;
+        //     }
 
-//             nil.cdr = Some(Arc::new(locked_cons));
-//             nil.map_token = Tracked(updated_nil_token);
-//             self.cell.put(Tracked(nil_perm.borrow_mut()), nil);
-//             self.release_lock(nil_perm);
-//             return;
-//         } 
-//         else {
-//             // We check if we need to insert inbetween Nil and the first Cons
-//             let first_locked_cons = nil_view.cdr.as_ref().unwrap().clone();
-//             let mut first_cons_perm = first_locked_cons.acquire_lock();
-//             let first_cons_view = first_locked_cons.cell.borrow(Tracked(first_cons_perm.borrow_mut()));
+        //     // If the first Cons cdr is larger than the insert cdr:
+        //     if (insert_car_raw < first_cons_view.car) {
 
-//             // If a Cons with this value already exists:
-//             if (insert_car_raw == first_cons_view.car) {
-//                 // Return early and do nothing - the Cons exists.
-//                 self.release_lock(nil_perm);
-//                 first_locked_cons.release_lock(first_cons_perm);
-//                 return;
-//             }
+        //         // Then we insert inbetween Nil and first Cons
+        //         let mut nil = self.cell.take(Tracked(nil_perm.borrow_mut()));
 
-//             // If the first Cons cdr is larger than the insert cdr:
-//             if (insert_car_raw < first_cons_view.car) {
+        //         let tracked token_tuple;
+        //         let tracked updated_nil_token;
+        //         let tracked cons_token;
 
-//                 // Then we insert inbetween Nil and first Cons
-//                 let mut nil = self.cell.take(Tracked(nil_perm.borrow_mut()));
+        //         proof {
+        //             token_tuple = self.instance.borrow().insert(
+        //                 self.view_car(), 
+        //                 insert_car, 
+        //                 nil.map_token.value(), 
+        //                 nil.map_token.get()
+        //             );
+        //             updated_nil_token = token_tuple.0.get();
+        //             cons_token = token_tuple.1.get();
+        //         }
 
-//                 let tracked token_tuple;
-//                 let tracked updated_nil_token;
-//                 let tracked cons_token;
+        //         let locked_cons = LockedCons::new(
+        //             insert_car_raw, 
+        //             Tracked(cons_token), 
+        //             Some(first_locked_cons.clone()), 
+        //             self.instance.clone()
+        //         );
 
-//                 proof {
-//                     token_tuple = self.instance.borrow().insert(
-//                         self.view_car(), 
-//                         insert_car, 
-//                         nil.map_token.value(), 
-//                         nil.map_token.get()
-//                     );
-//                     updated_nil_token = token_tuple.0.get();
-//                     cons_token = token_tuple.1.get();
-//                 }
+        //         nil.cdr = Some(Arc::new(locked_cons));
+        //         nil.map_token = Tracked(updated_nil_token);
 
-//                 let locked_cons = LockedCons::new(
-//                     insert_car_raw, 
-//                     Tracked(cons_token), 
-//                     Some(first_locked_cons.clone()), 
-//                     self.instance.clone()
-//                 );
+        //         self.cell.put(Tracked(nil_perm.borrow_mut()), nil);
 
-//                 nil.cdr = Some(Arc::new(locked_cons));
-//                 nil.map_token = Tracked(updated_nil_token);
+        //         self.release_lock(nil_perm);
+        //         first_locked_cons.release_lock(first_cons_perm);
+        //         return;
+        //     }
 
-//                 self.cell.put(Tracked(nil_perm.borrow_mut()), nil);
+        //     // If we have reached here, we may release the nil lock:
+        //     self.release_lock(nil_perm);
 
-//                 self.release_lock(nil_perm);
-//                 first_locked_cons.release_lock(first_cons_perm);
-//                 return;
-//             }
-
-//             // If we have reached here, we may release the nil lock:
-//             self.release_lock(nil_perm);
-
-//             // Any insert from here onwards will not involve nil - 
-//             // we may delegate the insert to a chain of LockedCons
-//             first_locked_cons.insert(first_cons_perm, insert_car_raw);
-//         }
-//     }
+        //     // Any insert from here onwards will not involve nil - 
+        //     // we may delegate the insert to a chain of LockedCons
+        //     first_locked_cons.insert(first_cons_perm, insert_car_raw);
+        // }
+    }
+}
 
 //     fn delete(self: Arc<Self>, delete_car_raw: u32)
 //         requires
@@ -430,24 +890,37 @@ pub struct Cons {
     pub cdr: Option<Arc<LockedCons>>,
 }
 
-pub tracked struct PermAndToken2 {
-    pub perm: PointsTo<Nil>
+pub tracked struct ConsPermAndToken {
+    pub cons_perm: PointsTo<Cons>,
+    pub map_token: machine::list_representation
 }
 
 struct_with_invariants!{
     pub struct LockedCons {
-        atomic: AtomicBool<_, Option<PermAndToken2>, _>,
-        cell: PCell<Cons>,
+        atomic: AtomicBool<_, Option<ConsPermAndToken>, _>,
+        cons_cell: PCell<Cons>,
         instance: Tracked<machine::Instance>,
         view_car: Ghost<u32>,
     }
 
     pub closed spec fn wf(&self) -> bool {
-        invariant on atomic with (cell, instance, view_car) is (v: bool, g: Option<PermAndToken2>) {
-            match g {
+        invariant on atomic with (cons_cell, instance, view_car) is (v: bool, option_cpat: Option<ConsPermAndToken>) {
+            match option_cpat {
                 None => v == true,
-                Some(points_to) => {
-                    true
+                Some(cpat) => {
+                    &&& v == false
+                    &&& cpat.cons_perm.is_init()
+                    &&& cpat.cons_perm.id() == cons_cell.id()
+                    &&& cpat.map_token.instance_id() == instance.id()
+                    &&& cpat.map_token.key() == cpat.cons_perm
+                    &&& (cpat.map_token.value().is_none() <==> cpat.cons_perm.value().cdr.is_none()) 
+                    &&& (cpat.map_token.value().is_some() ==> 
+                            (
+                                cpat.cons_perm.value().cdr.unwrap().wf() &&
+                                cpat.cons_perm.value().cdr.unwrap().view_instance() == instance &&
+                                cpat.cons_perm.value().cdr.unwrap().view_car() == cpat.map_token.value().unwrap().value().car
+                            )
+                        )
                 }
             }
         }
@@ -460,97 +933,87 @@ impl LockedCons {
         self.view_car@
     }
 
-    // pub closed spec fn view_instance(&self) -> (instance: machine::Instance)
-    // {
-    //     self.instance@
-    // }
+    pub closed spec fn view_instance(&self) -> (instance: machine::Instance)
+    {
+        self.instance@
+    }
 
-    // fn new(car: u32, map_token: Tracked<machine::data_map>, cdr: Option<Arc<LockedCons>>, instance: Tracked<machine::Instance>) -> (new_cons: Self)
-    //     requires
-    //         map_token@.instance_id() == instance@.id(),
-    //         map_token@.key() == NodeData::CAR(car),
-    //         map_token@.value().is_none() <==> cdr.is_none(),
-    //         map_token@.value().is_some() ==> (
-    //             cdr.unwrap().wf() &&
-    //             cdr.unwrap().view_instance() == instance &&
-    //             cdr.unwrap().view_car() > NodeData::CAR(car) &&
-    //             cdr.unwrap().view_car() == map_token@.value().unwrap()
-    //         ),
-    //     ensures 
-    //         new_cons.wf(),
-    //         new_cons.instance == instance,
-    //         new_cons.view_car == NodeData::CAR(car),
-    // {   
-    //     let view_car = Ghost(NodeData::CAR(car));
-    //     let node = Cons { car, cdr, map_token: map_token };
-    //     let (cell, Tracked(perm)) = PCell::new(node);
-    //     let atomic = AtomicBool::new(Ghost((cell, instance, view_car)), false, Tracked(Some(perm)));
-    //     Self { atomic, cell, instance, view_car }
-    // }
+    fn new(car: u32, cdr: Option<Arc<LockedCons>>, instance: Tracked<machine::Instance>) -> (cons_and_perm: (Self, Tracked<PointsTo<Cons>>))
+        ensures 
+            cons_and_perm.0.wf(),
+            cons_and_perm.0.instance == instance,
+            cons_and_perm.0.view_car == car,
+            cons_and_perm.0.cons_cell.id() == cons_and_perm.1.id(),
+            cons_and_perm.1.is_init(),
+            cons_and_perm.1.value().cdr == cdr,
+            cons_and_perm.1.value().car == car
+    {   
+        let view_car = Ghost(car);
+        let cons = Cons { car, cdr };
+        let (cons_cell, Tracked(cons_perm)) = PCell::new(cons);
+        let atomic = AtomicBool::new(Ghost((cons_cell, instance, view_car)), true, Tracked(None));
+        (Self { atomic, cons_cell, instance, view_car }, Tracked(cons_perm))
+    }
 
-    // fn acquire_lock(&self) -> (points_to: Tracked<PointsTo<Cons>>)
-    //     requires 
-    //         self.wf(),
-    //     ensures 
-    //         points_to.is_init(),
-    //         points_to.id() == self.cell.id(),
-    //         NodeData::CAR(points_to.value().car) == self.view_car,
-    //         points_to.value().map_token@.instance_id() == self.instance@.id(),
-    //         points_to.value().map_token@.key() == NodeData::CAR(points_to.value().car),
-    //         (points_to.value().map_token@.value().is_none() <==> points_to.value().cdr.is_none()), 
-    //         (points_to.value().map_token@.value().is_some() ==> 
-    //             (
-    //                 points_to.value().cdr.unwrap().wf() &&
-    //                 points_to.value().cdr.unwrap().view_instance() == self.instance &&
-    //                 points_to.value().cdr.unwrap().view_car() > NodeData::CAR(points_to.value().car) &&
-    //                 points_to.value().cdr.unwrap().view_car() == points_to.value().map_token@.value().unwrap()
-    //             )
-    //         ),
-    //         self.wf()
-    // {
-    //     loop
-    //         invariant self.wf(),
-    //     {
-    //         let tracked mut points_to_opt = None;
-    //         let res = atomic_with_ghost!(
-    //             &self.atomic => compare_exchange(false, true);
-    //             ghost points_to_inv => {
-    //                 tracked_swap(&mut points_to_opt, &mut points_to_inv);
-    //             }
-    //         );
-    //         if res.is_ok() {
-    //             return Tracked(points_to_opt.tracked_unwrap());
-    //         }
-    //     }
-    // }
+    fn acquire_lock(&self) -> (cpat: Tracked<ConsPermAndToken>)
+        requires 
+            self.wf(),
+        ensures 
+            cpat.cons_perm.is_init(),
+            cpat.cons_perm.id() == self.cons_cell.id(),
+            cpat.map_token.instance_id() == self.instance.id(),
+            cpat.map_token.key() == cpat.cons_perm,
+            (cpat.map_token.value().is_none() <==> cpat.cons_perm.value().cdr.is_none()),
+            (cpat.map_token.value().is_some() ==> 
+                (
+                    cpat.cons_perm.value().cdr.unwrap().wf() &&
+                    cpat.cons_perm.value().cdr.unwrap().view_instance() == self.instance &&
+                    cpat.cons_perm.value().cdr.unwrap().view_car() == cpat.map_token.value().unwrap().value().car
+                )
+            ),
+            self.wf()
+    {
+        loop
+            invariant self.wf(),
+        {
+            let tracked mut points_to_opt = None;
+            let res = atomic_with_ghost!(
+                &self.atomic => compare_exchange(false, true);
+                ghost points_to_inv => {
+                    tracked_swap(&mut points_to_opt, &mut points_to_inv);
+                }
+            );
+            if res.is_ok() {
+                return Tracked(points_to_opt.tracked_unwrap());
+            }
+        }
+    }
 
-    // fn release_lock(&self, points_to: Tracked<PointsTo<Cons>>)
-    //     requires
-    //         self.wf(),
-    //         points_to.is_init(),
-    //         points_to.id() == self.cell.id(),
-    //         NodeData::CAR(points_to.value().car) == self.view_car,
-    //         points_to.value().map_token@.instance_id() == self.instance@.id(),
-    //         points_to.value().map_token@.key() == NodeData::CAR(points_to.value().car),
-    //         (points_to.value().map_token@.value().is_none() <==> points_to.value().cdr.is_none()), 
-    //         (points_to.value().map_token@.value().is_some() ==> 
-    //             (
-    //                 points_to.value().cdr.unwrap().wf() &&
-    //                 points_to.value().cdr.unwrap().view_instance() == self.instance &&
-    //                 points_to.value().cdr.unwrap().view_car() > NodeData::CAR(points_to.value().car) &&
-    //                 points_to.value().cdr.unwrap().view_car() == points_to.value().map_token@.value().unwrap()
-    //             )
-    //         ),
-    //     ensures
-    //         self.wf()
-    // {
-    //     atomic_with_ghost!(
-    //         &self.atomic => store(false);
-    //         ghost points_to_inv => {
-    //             points_to_inv = Some(points_to.get());
-    //         }
-    //     );
-    // }
+    fn release_lock(&self, cpat: Tracked<ConsPermAndToken>)
+        requires
+            self.wf(),
+            cpat.cons_perm.is_init(),
+            cpat.cons_perm.id() == self.cons_cell.id(),
+            cpat.map_token.instance_id() == self.instance.id(),
+            cpat.map_token.key() == cpat.cons_perm,
+            (cpat.map_token.value().is_none() <==> cpat.cons_perm.value().cdr.is_none()),
+            (cpat.map_token.value().is_some() ==> 
+                (
+                    cpat.cons_perm.value().cdr.unwrap().wf() &&
+                    cpat.cons_perm.value().cdr.unwrap().view_instance() == self.instance &&
+                    cpat.cons_perm.value().cdr.unwrap().view_car() == cpat.map_token.value().unwrap().value().car
+                )
+            )
+        ensures
+            self.wf()
+    {
+        atomic_with_ghost!(
+            &self.atomic => store(false);
+            ghost points_to_inv => {
+                points_to_inv = Some(cpat.get());
+            }
+        );
+    }
 
     // fn insert(self: Arc<Self>, mut current_cons_perm: Tracked<PointsTo<Cons>>, insert_car_raw: u32)
     //     requires

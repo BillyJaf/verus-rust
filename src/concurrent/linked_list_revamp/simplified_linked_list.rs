@@ -132,7 +132,6 @@ tokenized_state_machine!{
         transition!{
             insert_at_head(nil_perm: PointsTo<Nil>, insert_perm: PointsTo<Cons>, upper_perm: PointsTo<Cons>)
             {   
-                require(pre.list_head.nil_perm == nil_perm);
                 require(pre.list_head.cons_perm == Some(upper_perm));
                 require(insert_perm.value().car < upper_perm.value().car);
                 
@@ -607,7 +606,7 @@ struct_with_invariants!{
                     &&& (npat.list_head.value().cons_perm.is_some() ==> 
                             (
                                 npat.nil_perm.value().cdr.unwrap().wf() &&
-                                 npat.nil_perm.value().cdr.unwrap().view_instance() == instance &&
+                                npat.nil_perm.value().cdr.unwrap().view_instance() == instance &&
                                 npat.nil_perm.value().cdr.unwrap().view_car() == npat.list_head.value().cons_perm.unwrap().value().car
                             )
                         )
@@ -741,65 +740,63 @@ impl LockedNil {
             arc_locked_cons.release_lock(Tracked(ConsPermAndToken { cons_perm, map_token }));
             return;
         } 
-        // else {
-        //     // We check if we need to insert inbetween Nil and the first Cons
-        //     let first_locked_cons = nil_view.cdr.as_ref().unwrap().clone();
-        //     let mut first_cons_perm = first_locked_cons.acquire_lock();
-        //     let first_cons_view = first_locked_cons.cell.borrow(Tracked(first_cons_perm.borrow_mut()));
+        else {
+            // We check if we need to insert inbetween Nil and the first Cons
 
-        //     // If a Cons with this value already exists:
-        //     if (insert_car_raw == first_cons_view.car) {
-        //         // Return early and do nothing - the Cons exists.
-        //         self.release_lock(nil_perm);
-        //         first_locked_cons.release_lock(first_cons_perm);
-        //         return;
-        //     }
+            let first_locked_cons = nil_view.cdr.as_ref().unwrap().clone();
+            let mut first_cons_perm_and_token = first_locked_cons.acquire_lock();
+            let first_cons_view = first_locked_cons.cons_cell.borrow(Tracked(&mut first_cons_perm_and_token.cons_perm));
 
-        //     // If the first Cons cdr is larger than the insert cdr:
-        //     if (insert_car_raw < first_cons_view.car) {
+            // If a Cons with this value already exists:
+            if (insert_car == first_cons_view.car) {
+                // Return early and do nothing - the Cons exists.
+                self.release_lock(nil_perm_and_token);
+                first_locked_cons.release_lock(first_cons_perm_and_token);
+                return;
+            }
 
-        //         // Then we insert inbetween Nil and first Cons
-        //         let mut nil = self.cell.take(Tracked(nil_perm.borrow_mut()));
+            // If the first Cons cdr is larger than the insert cdr:
+            if (insert_car < first_cons_view.car) {
+                // Then we insert inbetween Nil and first Cons
+                let tracked map_token;
 
-        //         let tracked token_tuple;
-        //         let tracked updated_nil_token;
-        //         let tracked cons_token;
+                let (locked_cons, Tracked(cons_perm)) = LockedCons::new(
+                    insert_car,  
+                    first_cons_view.cdr.clone(), 
+                    self.instance.clone()
+                );
 
-        //         proof {
-        //             token_tuple = self.instance.borrow().insert(
-        //                 self.view_car(), 
-        //                 insert_car, 
-        //                 nil.map_token.value(), 
-        //                 nil.map_token.get()
-        //             );
-        //             updated_nil_token = token_tuple.0.get();
-        //             cons_token = token_tuple.1.get();
-        //         }
+                let arc_locked_cons = Arc::new(locked_cons);
 
-        //         let locked_cons = LockedCons::new(
-        //             insert_car_raw, 
-        //             Tracked(cons_token), 
-        //             Some(first_locked_cons.clone()), 
-        //             self.instance.clone()
-        //         );
+                let mut nil = self.nil_cell.take(Tracked(&mut nil_perm_and_token.nil_perm));
+                nil.cdr = Some(arc_locked_cons.clone());
+                self.nil_cell.put(Tracked(&mut nil_perm_and_token.nil_perm), nil);
 
-        //         nil.cdr = Some(Arc::new(locked_cons));
-        //         nil.map_token = Tracked(updated_nil_token);
+                // assume(nil_perm_and_token.list_head.value().cons_perm == Some(first_cons_perm_and_token@.cons_perm));
+                // require(pre.list_head.cons_perm == Some(upper_perm));
+                // require(insert_perm.value().car < upper_perm.value().car);
 
-        //         self.cell.put(Tracked(nil_perm.borrow_mut()), nil);
+                proof {
+                    map_token = self.instance.insert_at_head(
+                        nil_perm_and_token@.nil_perm,
+                        cons_perm,
+                        first_cons_perm_and_token@.cons_perm,
+                        &mut nil_perm_and_token.list_head
+                    );
+                }
 
-        //         self.release_lock(nil_perm);
-        //         first_locked_cons.release_lock(first_cons_perm);
-        //         return;
-        //     }
+                self.release_lock(nil_perm_and_token);
+                arc_locked_cons.release_lock(Tracked(ConsPermAndToken { cons_perm, map_token }));
+                return;
+            }
 
-        //     // If we have reached here, we may release the nil lock:
-        //     self.release_lock(nil_perm);
+            // // If we have reached here, we may release the nil lock:
+            // self.release_lock(nil_perm);
 
-        //     // Any insert from here onwards will not involve nil - 
-        //     // we may delegate the insert to a chain of LockedCons
-        //     first_locked_cons.insert(first_cons_perm, insert_car_raw);
-        // }
+            // // Any insert from here onwards will not involve nil - 
+            // // we may delegate the insert to a chain of LockedCons
+            // first_locked_cons.insert(first_cons_perm, insert_car_raw);
+        }
     }
 }
 

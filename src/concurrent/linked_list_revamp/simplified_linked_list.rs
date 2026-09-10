@@ -161,13 +161,6 @@ tokenized_state_machine!{
         // Delete
 
         transition!{
-            empty_delete()
-            {   
-                require(pre.list_head.is_none());
-            }
-        }
-
-        transition!{
             delete_at_head(delete_elem: u32)
             {   
                 require(pre.list_head == Some(delete_elem));
@@ -206,9 +199,6 @@ tokenized_state_machine!{
         fn insert_at_tail_inductive(pre: Self, post: Self, lower_elem: u32, insert_elem: u32) {
             assume(false);
         }
-       
-        #[inductive(empty_delete)]
-        fn empty_delete_inductive(pre: Self, post: Self) { }
        
         #[inductive(delete_at_head)]
         fn delete_at_head_inductive(pre: Self, post: Self, delete_elem: u32) {
@@ -429,97 +419,72 @@ impl LockedNil {
                 return;
             }
 
-            // // If we have reached here, we may release the nil lock:
-            // self.release_lock(nil_perm);
+            // If we have reached here, we may release the nil lock:
+            self.release_lock(nil_perm_and_token);
 
-            // // Any insert from here onwards will not involve nil - 
-            // // we may delegate the insert to a chain of LockedCons
-            // first_locked_cons.insert(first_cons_perm, insert_car_raw);
+            // Any insert from here onwards will not involve nil - 
+            // we may delegate the insert to a chain of LockedCons
+            // first_locked_cons.insert(insert_car, first_cons_perm_and_token);
         }
     }
-}
 
-//     fn delete(self: Arc<Self>, delete_car_raw: u32)
-//         requires
-//             self.wf()
-//         ensures
-//             self.wf()
-//     {
-//         let delete_car = NodeData::CAR(delete_car_raw);
-//         // Acquire the lock for the nil node, and view the data inside (without taking)
-//         let mut nil_perm = self.acquire_lock();
-//         let nil_view = self.cell.borrow(Tracked(nil_perm.borrow_mut()));
+    fn delete(self: Arc<Self>, delete_car: u32)
+        requires
+            self.wf()
+        ensures
+            self.wf()
+    {
+        // Acquire the lock for the nil node, and view the data inside (without taking)
+        let mut nil_perm_and_token = self.acquire_lock();
+        let nil_view = self.nil_cell.borrow(Tracked(&mut nil_perm_and_token.nil_perm));
 
-//         // If the nil cdr is none, then we are done - no tokens exist ==> no nodes exist
-//         if (nil_view.cdr.is_none()) {
-//             proof {
-//                 self.instance.delete_successful_empty_list(delete_car, nil_view.map_token.borrow());
-//             }
-//             self.release_lock(nil_perm);
-//             return;
-//         }
+        // If the nil cdr is none, then we are done - no tokens exist ==> no nodes exist
+        if (nil_view.cdr.is_none()) {
+            self.release_lock(nil_perm_and_token);
+            return;
+        }
 
-//         // We check if we need to delete the first Cons (hence lower is LockedNil)
-//         let first_locked_cons = nil_view.cdr.as_ref().unwrap().clone();
-//         let mut first_cons_perm = first_locked_cons.acquire_lock();
-//         let first_cons_view = first_locked_cons.cell.borrow(Tracked(first_cons_perm.borrow_mut()));
+        // We check if we need to delete the first Cons (hence lower is LockedNil)
+        let first_locked_cons = nil_view.cdr.as_ref().unwrap().clone();
+        let mut first_cons_perm_and_token = first_locked_cons.acquire_lock();
+        let tracked ConsPermAndToken { cons_perm, map_token } = first_cons_perm_and_token.get();
 
-//         // If the first car is larger than our delete, then we are done - no tokens exist ==> no nodes exist
-//         if (delete_car_raw < first_cons_view.car) {
-//             proof {
-//                 self.instance.delete_successful_car_not_in_list(
-//                     self.view_car(), 
-//                     delete_car, 
-//                     nil_view.map_token.value(), 
-//                     nil_view.map_token.borrow()
-//                 );
-//             }
-//             self.release_lock(nil_perm);
-//             first_locked_cons.release_lock(first_cons_perm);
-//             return;
-//         }
+        let first_cons_view = first_locked_cons.cons_cell.borrow(Tracked(&mut cons_perm));
 
-//         // Check if we are deleting the first LockedCons:
-//         if (delete_car_raw == first_cons_view.car) {
-//             let mut nil = self.cell.take(Tracked(nil_perm.borrow_mut()));
-//             let mut first_cons = first_locked_cons.cell.take(Tracked(first_cons_perm.borrow_mut()));
+        // If the first car is larger than our delete, then we are done - no tokens exist ==> no nodes exist
+        if (delete_car < first_cons_view.car) {
+            self.release_lock(nil_perm_and_token);
+            first_locked_cons.release_lock(Tracked(ConsPermAndToken { cons_perm, map_token }));
+            return;
+        }
 
-//             let tracked updated_nil_token;
+        // // Check if we are deleting the first LockedCons:
+        if (delete_car == first_cons_view.car) {
+            let mut nil = self.nil_cell.take(Tracked(&mut nil_perm_and_token.nil_perm));
+            let mut first_cons = first_locked_cons.cons_cell.take(Tracked(&mut cons_perm));
 
-//             proof {
-//                 updated_nil_token = self.instance.borrow().delete(
-//                     self.view_car(), 
-//                     delete_car, 
-//                     first_cons.map_token.value(), 
-//                     nil.map_token.get(),
-//                     first_cons.map_token.get()
-//                 );
-//             }
+            proof {
+                self.instance.delete_at_head(
+                    delete_car, 
+                    &mut nil_perm_and_token.list_head,
+                    map_token
+                );
+            }
 
-//             nil.map_token = Tracked(updated_nil_token);
-//             nil.cdr = first_cons.cdr;
+            nil.cdr = first_cons.cdr;
+            self.nil_cell.put(Tracked(&mut nil_perm_and_token.nil_perm), nil);
 
-//             proof {
-//                 self.instance.delete_successful_car_not_in_list(
-//                     self.view_car(), 
-//                     delete_car, 
-//                     nil.map_token.value(), 
-//                     nil.map_token.borrow()
-//                 );
-//             }
+            self.release_lock(nil_perm_and_token);
 
-//             self.cell.put(Tracked(nil_perm.borrow_mut()), nil);
-//             self.release_lock(nil_perm);
-
-//             return;
-//         }
+            return;
+        }
         
-//         // We can release the dummy node lock.
-//         self.release_lock(nil_perm);
-//         // and begin our traversal:
-//         first_locked_cons.delete(first_cons_perm, delete_car_raw);
-//     }
-// }
+        // We can release the dummy node lock.
+        self.release_lock(nil_perm_and_token);
+        // // and begin our traversal:
+        // first_locked_cons.delete(first_cons_perm, delete_car_raw);
+    }
+}
 
 pub struct Cons {
     pub car: u32,
@@ -555,7 +520,8 @@ struct_with_invariants!{
                             (
                                 cpat.cons_perm.value().cdr.unwrap().wf() &&
                                 cpat.cons_perm.value().cdr.unwrap().view_instance() == instance &&
-                                cpat.cons_perm.value().cdr.unwrap().view_car() == cpat.map_token.value().unwrap()
+                                cpat.cons_perm.value().cdr.unwrap().view_car() == cpat.map_token.value().unwrap() && 
+                                cpat.cons_perm.value().cdr.unwrap().view_car() > cpat.cons_perm.value().car
                             )
                         )
                 }
@@ -584,7 +550,8 @@ impl LockedCons {
                 (
                     cdr.unwrap().wf() &&
                     cdr.unwrap().view_instance() == instance &&
-                    cdr.unwrap().view_car() == map_token.value().unwrap()
+                    cdr.unwrap().view_car() == map_token.value().unwrap() &&
+                    cdr.unwrap().view_car() > car
                 )
             ),
         ensures 
@@ -617,7 +584,8 @@ impl LockedCons {
                 (
                     cpat.cons_perm.value().cdr.unwrap().wf() &&
                     cpat.cons_perm.value().cdr.unwrap().view_instance() == self.instance &&
-                    cpat.cons_perm.value().cdr.unwrap().view_car() == cpat.map_token.value().unwrap()
+                    cpat.cons_perm.value().cdr.unwrap().view_car() == cpat.map_token.value().unwrap() &&
+                    cpat.cons_perm.value().cdr.unwrap().view_car() > cpat.cons_perm.value().car
                 )
             ),
             self.wf()
@@ -651,7 +619,8 @@ impl LockedCons {
                 (
                     cpat.cons_perm.value().cdr.unwrap().wf() &&
                     cpat.cons_perm.value().cdr.unwrap().view_instance() == self.instance &&
-                    cpat.cons_perm.value().cdr.unwrap().view_car() == cpat.map_token.value().unwrap()
+                    cpat.cons_perm.value().cdr.unwrap().view_car() == cpat.map_token.value().unwrap() &&
+                    cpat.cons_perm.value().cdr.unwrap().view_car() > cpat.cons_perm.value().car
                 )
             ),
         ensures
@@ -665,9 +634,25 @@ impl LockedCons {
         );
     }
 
-    // fn insert(self: Arc<Self>, mut current_cons_perm: Tracked<PointsTo<Cons>>, insert_car_raw: u32)
+    // fn insert(self: Arc<Self>, insert_car: u32, cpat: Tracked<ConsPermAndToken>)
     //     requires
     //         self.wf(),
+    //         cpat.cons_perm.is_init(),
+    //         cpat.cons_perm.id() == self.cons_cell.id(),
+    //         cpat.map_token.instance_id() == self.instance.id(),
+    //         cpat.map_token.key() == self.view_car,
+    //         cpat.cons_perm.value().car == self.view_car,
+    //         (cpat.map_token.value().is_none() <==> cpat.cons_perm.value().cdr.is_none()) ,
+    //         (cpat.map_token.value().is_some() ==> 
+    //             (
+    //                 cpat.cons_perm.value().cdr.unwrap().wf() &&
+    //                 cpat.cons_perm.value().cdr.unwrap().view_instance() == self.instance &&
+    //                 cpat.cons_perm.value().cdr.unwrap().view_car() == cpat.map_token.value().unwrap() &&
+    //                 cpat.cons_perm.value().cdr.unwrap().view_car() > cpat.cons_perm.value().car
+    //             )
+    //         ),
+
+
     //         current_cons_perm.is_init(),
     //         current_cons_perm.id() == self.cell.id(),
     //         NodeData::CAR(current_cons_perm.value().car) == self.view_car,
@@ -711,102 +696,102 @@ impl LockedCons {
     //         decreases
     //             insert_car_raw - current_cons_perm.value().car
     //     {
-    //         let mut current_cons_view = current_locked_cons.cell.borrow(Tracked(current_cons_perm.borrow_mut()));
+    //         // let mut current_cons_view = current_locked_cons.cell.borrow(Tracked(current_cons_perm.borrow_mut()));
 
-    //         // If there is no next LockedCons, then we must insert at the tail after a Cons
-    //         if (current_cons_view.cdr.is_none()) {
+    //         // // If there is no next LockedCons, then we must insert at the tail after a Cons
+    //         // if (current_cons_view.cdr.is_none()) {
 
-    //             let mut old_tail_cons = current_locked_cons.cell.take(Tracked(current_cons_perm.borrow_mut()));
+    //         //     let mut old_tail_cons = current_locked_cons.cell.take(Tracked(current_cons_perm.borrow_mut()));
 
-    //             let tracked token_tuple;
-    //             let tracked updated_old_tail_cons_token;
-    //             let tracked new_tail_cons_token;
+    //         //     let tracked token_tuple;
+    //         //     let tracked updated_old_tail_cons_token;
+    //         //     let tracked new_tail_cons_token;
 
-    //             proof {
-    //                 token_tuple = current_locked_cons.instance.borrow().insert(
-    //                     current_locked_cons.view_car(), 
-    //                     insert_car, 
-    //                     old_tail_cons.map_token.value(), 
-    //                     old_tail_cons.map_token.get()
-    //                 );
-    //                 updated_old_tail_cons_token = token_tuple.0.get();
-    //                 new_tail_cons_token = token_tuple.1.get();
-    //             }
+    //         //     proof {
+    //         //         token_tuple = current_locked_cons.instance.borrow().insert(
+    //         //             current_locked_cons.view_car(), 
+    //         //             insert_car, 
+    //         //             old_tail_cons.map_token.value(), 
+    //         //             old_tail_cons.map_token.get()
+    //         //         );
+    //         //         updated_old_tail_cons_token = token_tuple.0.get();
+    //         //         new_tail_cons_token = token_tuple.1.get();
+    //         //     }
 
-    //             let locked_cons = LockedCons::new(
-    //                 insert_car_raw, 
-    //                 Tracked(new_tail_cons_token), 
-    //                 None::<Arc<LockedCons>>, 
-    //                 current_locked_cons.instance.clone()
-    //             );
+    //         //     let locked_cons = LockedCons::new(
+    //         //         insert_car_raw, 
+    //         //         Tracked(new_tail_cons_token), 
+    //         //         None::<Arc<LockedCons>>, 
+    //         //         current_locked_cons.instance.clone()
+    //         //     );
 
-    //             old_tail_cons.cdr = Some(Arc::new(locked_cons));
-    //             old_tail_cons.map_token = Tracked(updated_old_tail_cons_token);
+    //         //     old_tail_cons.cdr = Some(Arc::new(locked_cons));
+    //         //     old_tail_cons.map_token = Tracked(updated_old_tail_cons_token);
 
-    //             current_locked_cons.cell.put(Tracked(current_cons_perm.borrow_mut()), old_tail_cons);
-    //             current_locked_cons.release_lock(current_cons_perm);
+    //         //     current_locked_cons.cell.put(Tracked(current_cons_perm.borrow_mut()), old_tail_cons);
+    //         //     current_locked_cons.release_lock(current_cons_perm);
 
-    //             return;
-    //         } 
-    //         // Otherwise, there is another LockedCons
-    //         else {
-    //             // Acquire the permissions to access the Cons:
-    //             let next_locked_cons = current_cons_view.cdr.as_ref().unwrap().clone();
-    //             let mut next_cons_perm = next_locked_cons.acquire_lock();
-    //             let next_cons_view = next_locked_cons.cell.borrow(Tracked(next_cons_perm.borrow_mut()));
+    //         //     return;
+    //         // } 
+    //         // // Otherwise, there is another LockedCons
+    //         // else {
+    //         //     // Acquire the permissions to access the Cons:
+    //         //     let next_locked_cons = current_cons_view.cdr.as_ref().unwrap().clone();
+    //         //     let mut next_cons_perm = next_locked_cons.acquire_lock();
+    //         //     let next_cons_view = next_locked_cons.cell.borrow(Tracked(next_cons_perm.borrow_mut()));
 
-    //             // If a Cons with this value already exists:
-    //             if (insert_car_raw == next_cons_view.car) {
-    //                 // Return early and do nothing - the Cons exists.
-    //                 current_locked_cons.release_lock(current_cons_perm);
-    //                 next_locked_cons.release_lock(next_cons_perm);
-    //                 return;
-    //             }
+    //         //     // If a Cons with this value already exists:
+    //         //     if (insert_car_raw == next_cons_view.car) {
+    //         //         // Return early and do nothing - the Cons exists.
+    //         //         current_locked_cons.release_lock(current_cons_perm);
+    //         //         next_locked_cons.release_lock(next_cons_perm);
+    //         //         return;
+    //         //     }
 
-    //             // If the next Cons cdr is larger than the insert cdr:
-    //             if (insert_car_raw < next_cons_view.car) {
+    //         //     // If the next Cons cdr is larger than the insert cdr:
+    //         //     if (insert_car_raw < next_cons_view.car) {
 
-    //                 // Then we insert inbetween Cons and Cons
-    //                 let mut current_cons = current_locked_cons.cell.take(Tracked(current_cons_perm.borrow_mut()));
+    //         //         // Then we insert inbetween Cons and Cons
+    //         //         let mut current_cons = current_locked_cons.cell.take(Tracked(current_cons_perm.borrow_mut()));
 
-    //                 let tracked token_tuple;
-    //                 let tracked updated_cons_token;
-    //                 let tracked new_cons_token;
+    //         //         let tracked token_tuple;
+    //         //         let tracked updated_cons_token;
+    //         //         let tracked new_cons_token;
 
-    //                 proof {
-    //                     token_tuple = current_locked_cons.instance.borrow().insert(
-    //                         current_locked_cons.view_car(), 
-    //                         insert_car, 
-    //                         current_cons.map_token.value(), 
-    //                         current_cons.map_token.get()
-    //                     );
-    //                     updated_cons_token = token_tuple.0.get();
-    //                     new_cons_token = token_tuple.1.get();
-    //                 }
+    //         //         proof {
+    //         //             token_tuple = current_locked_cons.instance.borrow().insert(
+    //         //                 current_locked_cons.view_car(), 
+    //         //                 insert_car, 
+    //         //                 current_cons.map_token.value(), 
+    //         //                 current_cons.map_token.get()
+    //         //             );
+    //         //             updated_cons_token = token_tuple.0.get();
+    //         //             new_cons_token = token_tuple.1.get();
+    //         //         }
 
-    //                 let locked_cons = LockedCons::new(
-    //                     insert_car_raw, 
-    //                     Tracked(new_cons_token), 
-    //                     Some(next_locked_cons.clone()), 
-    //                     current_locked_cons.instance.clone()
-    //                 );
+    //         //         let locked_cons = LockedCons::new(
+    //         //             insert_car_raw, 
+    //         //             Tracked(new_cons_token), 
+    //         //             Some(next_locked_cons.clone()), 
+    //         //             current_locked_cons.instance.clone()
+    //         //         );
 
-    //                 current_cons.cdr = Some(Arc::new(locked_cons));
-    //                 current_cons.map_token = Tracked(updated_cons_token);
+    //         //         current_cons.cdr = Some(Arc::new(locked_cons));
+    //         //         current_cons.map_token = Tracked(updated_cons_token);
 
-    //                 current_locked_cons.cell.put(Tracked(current_cons_perm.borrow_mut()), current_cons);
+    //         //         current_locked_cons.cell.put(Tracked(current_cons_perm.borrow_mut()), current_cons);
 
-    //                 current_locked_cons.release_lock(current_cons_perm);
-    //                 next_locked_cons.release_lock(next_cons_perm);
-    //                 return;
-    //             }
+    //         //         current_locked_cons.release_lock(current_cons_perm);
+    //         //         next_locked_cons.release_lock(next_cons_perm);
+    //         //         return;
+    //         //     }
 
-    //             // Otherwise, we give up the previous lock, and loop again
-    //             current_locked_cons.release_lock(current_cons_perm);
+    //         //     // Otherwise, we give up the previous lock, and loop again
+    //         //     current_locked_cons.release_lock(current_cons_perm);
 
-    //             current_locked_cons = next_locked_cons;
-    //             current_cons_perm = next_cons_perm;
-    //         }
+    //         //     current_locked_cons = next_locked_cons;
+    //         //     current_cons_perm = next_cons_perm;
+    //         // }
     //     }
     // }
 

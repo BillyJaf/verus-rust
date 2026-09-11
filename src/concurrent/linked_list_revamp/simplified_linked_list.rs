@@ -424,7 +424,7 @@ impl LockedNil {
 
             // Any insert from here onwards will not involve nil - 
             // we may delegate the insert to a chain of LockedCons
-            // first_locked_cons.insert(insert_car, first_cons_perm_and_token);
+            first_locked_cons.insert(insert_car, first_cons_perm_and_token);
         }
     }
 
@@ -634,166 +634,147 @@ impl LockedCons {
         );
     }
 
-    // fn insert(self: Arc<Self>, insert_car: u32, cpat: Tracked<ConsPermAndToken>)
-    //     requires
-    //         self.wf(),
-    //         cpat.cons_perm.is_init(),
-    //         cpat.cons_perm.id() == self.cons_cell.id(),
-    //         cpat.map_token.instance_id() == self.instance.id(),
-    //         cpat.map_token.key() == self.view_car,
-    //         cpat.cons_perm.value().car == self.view_car,
-    //         (cpat.map_token.value().is_none() <==> cpat.cons_perm.value().cdr.is_none()) ,
-    //         (cpat.map_token.value().is_some() ==> 
-    //             (
-    //                 cpat.cons_perm.value().cdr.unwrap().wf() &&
-    //                 cpat.cons_perm.value().cdr.unwrap().view_instance() == self.instance &&
-    //                 cpat.cons_perm.value().cdr.unwrap().view_car() == cpat.map_token.value().unwrap() &&
-    //                 cpat.cons_perm.value().cdr.unwrap().view_car() > cpat.cons_perm.value().car
-    //             )
-    //         ),
+    fn insert(self: Arc<Self>, insert_car: u32, mut cpat: Tracked<ConsPermAndToken>)
+        requires
+            self.wf(),
+            cpat.cons_perm.is_init(),
+            cpat.cons_perm.id() == self.cons_cell.id(),
+            cpat.map_token.instance_id() == self.instance.id(),
+            cpat.map_token.key() == self.view_car,
+            cpat.cons_perm.value().car == self.view_car,
+            (cpat.map_token.value().is_none() <==> cpat.cons_perm.value().cdr.is_none()) ,
+            (cpat.map_token.value().is_some() ==> 
+                (
+                    cpat.cons_perm.value().cdr.unwrap().wf() &&
+                    cpat.cons_perm.value().cdr.unwrap().view_instance() == self.instance &&
+                    cpat.cons_perm.value().cdr.unwrap().view_car() == cpat.map_token.value().unwrap() &&
+                    cpat.cons_perm.value().cdr.unwrap().view_car() > cpat.cons_perm.value().car
+                )
+            ),
+            cpat.cons_perm.value().car < insert_car
+        ensures
+            self.wf()
+    {
+        let mut current_locked_cons = self;
+        loop 
+            invariant
+                self.wf(),
+                current_locked_cons.wf(),
+                current_locked_cons.instance == self.instance,
+                cpat.cons_perm.is_init(),
+                cpat.cons_perm.id() == current_locked_cons.cons_cell.id(),
+                cpat.map_token.instance_id() == current_locked_cons.instance.id(),
+                cpat.map_token.key() == current_locked_cons.view_car,
+                cpat.cons_perm.value().car == current_locked_cons.view_car,
+                (cpat.map_token.value().is_none() <==> cpat.cons_perm.value().cdr.is_none()) ,
+                (cpat.map_token.value().is_some() ==> 
+                    (
+                        cpat.cons_perm.value().cdr.unwrap().wf() &&
+                        cpat.cons_perm.value().cdr.unwrap().view_instance() == current_locked_cons.instance &&
+                        cpat.cons_perm.value().cdr.unwrap().view_car() == cpat.map_token.value().unwrap() &&
+                        cpat.cons_perm.value().cdr.unwrap().view_car() > cpat.cons_perm.value().car
+                    )
+                ),
+                cpat.cons_perm.value().car < insert_car
+            // decreases
+            //     insert_car - cpat.cons_perm.value().car
+        {
+            let tracked ConsPermAndToken { cons_perm, map_token } = cpat.get();
+            let mut current_cons_view = current_locked_cons.cons_cell.borrow(Tracked(&mut cons_perm));
 
+            // If there is no next LockedCons, then we must insert at the tail after a Cons
+            if (current_cons_view.cdr.is_none()) {
 
-    //         current_cons_perm.is_init(),
-    //         current_cons_perm.id() == self.cell.id(),
-    //         NodeData::CAR(current_cons_perm.value().car) == self.view_car,
-    //         current_cons_perm.value().map_token@.instance_id() == self.instance@.id(),
-    //         current_cons_perm.value().map_token@.key() == NodeData::CAR(current_cons_perm.value().car),
-    //         (current_cons_perm.value().map_token@.value().is_none() <==> current_cons_perm.value().cdr.is_none()), 
-    //         (current_cons_perm.value().map_token@.value().is_some() ==> 
-    //             (
-    //                 current_cons_perm.value().cdr.unwrap().wf() &&
-    //                 current_cons_perm.value().cdr.unwrap().view_instance() == self.instance &&
-    //                 current_cons_perm.value().cdr.unwrap().view_car() > NodeData::CAR(current_cons_perm.value().car) &&
-    //                 current_cons_perm.value().cdr.unwrap().view_car() == current_cons_perm.value().map_token@.value().unwrap()
-    //             )
-    //         ),
-    //         current_cons_perm.value().car < insert_car_raw
-    //     ensures
-    //         self.wf()
-    // {
-    //     let insert_car = NodeData::CAR(insert_car_raw);
-    //     let mut current_locked_cons = self;
-    //     loop 
-    //         invariant
-    //             self.wf(),
-    //             current_locked_cons.wf(),
-    //             current_cons_perm.is_init(),
-    //             current_cons_perm.id() == current_locked_cons.cell.id(),
-    //             NodeData::CAR(current_cons_perm.value().car) == current_locked_cons.view_car,
-    //             current_cons_perm.value().map_token@.instance_id() == current_locked_cons.instance@.id(),
-    //             current_cons_perm.value().map_token@.key() == NodeData::CAR(current_cons_perm.value().car),
-    //             (current_cons_perm.value().map_token@.value().is_none() <==> current_cons_perm.value().cdr.is_none()), 
-    //             (current_cons_perm.value().map_token@.value().is_some() ==> 
-    //                 (
-    //                     current_cons_perm.value().cdr.unwrap().wf() &&
-    //                     current_cons_perm.value().cdr.unwrap().view_instance() == current_locked_cons.instance &&
-    //                     current_cons_perm.value().cdr.unwrap().view_car() > NodeData::CAR(current_cons_perm.value().car) &&
-    //                     current_cons_perm.value().cdr.unwrap().view_car() == current_cons_perm.value().map_token@.value().unwrap()
-    //                 )
-    //             ),
-    //             current_cons_perm.value().car < insert_car_raw,
-    //             insert_car == NodeData::CAR(insert_car_raw)
-    //         decreases
-    //             insert_car_raw - current_cons_perm.value().car
-    //     {
-    //         // let mut current_cons_view = current_locked_cons.cell.borrow(Tracked(current_cons_perm.borrow_mut()));
+                let mut old_tail_cons = current_locked_cons.cons_cell.take(Tracked(&mut cons_perm));
 
-    //         // // If there is no next LockedCons, then we must insert at the tail after a Cons
-    //         // if (current_cons_view.cdr.is_none()) {
+                let tracked token_tuple;
+                let tracked updated_old_tail_cons_token;
+                let tracked new_tail_cons_token;
 
-    //         //     let mut old_tail_cons = current_locked_cons.cell.take(Tracked(current_cons_perm.borrow_mut()));
+                proof {
+                    token_tuple = current_locked_cons.instance.insert_at_tail(
+                        old_tail_cons.car, 
+                        insert_car, 
+                        map_token
+                    );
+                    updated_old_tail_cons_token = token_tuple.0.get();
+                    new_tail_cons_token = token_tuple.1.get();
+                }
 
-    //         //     let tracked token_tuple;
-    //         //     let tracked updated_old_tail_cons_token;
-    //         //     let tracked new_tail_cons_token;
+                let locked_cons = LockedCons::new(
+                    insert_car, 
+                    None::<Arc<LockedCons>>, 
+                    current_locked_cons.instance.clone(),
+                    Tracked(new_tail_cons_token)
+                );
 
-    //         //     proof {
-    //         //         token_tuple = current_locked_cons.instance.borrow().insert(
-    //         //             current_locked_cons.view_car(), 
-    //         //             insert_car, 
-    //         //             old_tail_cons.map_token.value(), 
-    //         //             old_tail_cons.map_token.get()
-    //         //         );
-    //         //         updated_old_tail_cons_token = token_tuple.0.get();
-    //         //         new_tail_cons_token = token_tuple.1.get();
-    //         //     }
+                old_tail_cons.cdr = Some(Arc::new(locked_cons));
+                current_locked_cons.cons_cell.put(Tracked(&mut cons_perm), old_tail_cons);
+                current_locked_cons.release_lock(Tracked(ConsPermAndToken { cons_perm, map_token: updated_old_tail_cons_token }));
+                return;
+            } 
+            // Otherwise, there is another LockedCons
+            else {
+                // Acquire the permissions to access the Cons:
+                let next_locked_cons = current_cons_view.cdr.as_ref().unwrap().clone();
+                let mut next_cpat = next_locked_cons.acquire_lock();
+                let tracked ConsPermAndToken { cons_perm: next_cons_perm, map_token: next_map_token } = next_cpat.get();
+                let next_cons_view = next_locked_cons.cons_cell.borrow(Tracked(&mut next_cons_perm));
 
-    //         //     let locked_cons = LockedCons::new(
-    //         //         insert_car_raw, 
-    //         //         Tracked(new_tail_cons_token), 
-    //         //         None::<Arc<LockedCons>>, 
-    //         //         current_locked_cons.instance.clone()
-    //         //     );
+                // If a Cons with this value already exists:
+                if (insert_car == next_cons_view.car) {
+                    // Return early and do nothing - the Cons exists.
+                    current_locked_cons.release_lock(Tracked(ConsPermAndToken { cons_perm, map_token }));
+                    next_locked_cons.release_lock(Tracked(ConsPermAndToken { cons_perm: next_cons_perm, map_token: next_map_token }));
+                    return;
+                }
 
-    //         //     old_tail_cons.cdr = Some(Arc::new(locked_cons));
-    //         //     old_tail_cons.map_token = Tracked(updated_old_tail_cons_token);
+                // If the next Cons cdr is larger than the insert cdr:
+                if (insert_car < next_cons_view.car) {
 
-    //         //     current_locked_cons.cell.put(Tracked(current_cons_perm.borrow_mut()), old_tail_cons);
-    //         //     current_locked_cons.release_lock(current_cons_perm);
+                    // Then we insert inbetween Cons and Cons
+                    let mut current_cons = current_locked_cons.cons_cell.take(Tracked(&mut cons_perm));
 
-    //         //     return;
-    //         // } 
-    //         // // Otherwise, there is another LockedCons
-    //         // else {
-    //         //     // Acquire the permissions to access the Cons:
-    //         //     let next_locked_cons = current_cons_view.cdr.as_ref().unwrap().clone();
-    //         //     let mut next_cons_perm = next_locked_cons.acquire_lock();
-    //         //     let next_cons_view = next_locked_cons.cell.borrow(Tracked(next_cons_perm.borrow_mut()));
+                    let tracked token_tuple;
+                    let tracked updated_cons_token;
+                    let tracked new_cons_token;
 
-    //         //     // If a Cons with this value already exists:
-    //         //     if (insert_car_raw == next_cons_view.car) {
-    //         //         // Return early and do nothing - the Cons exists.
-    //         //         current_locked_cons.release_lock(current_cons_perm);
-    //         //         next_locked_cons.release_lock(next_cons_perm);
-    //         //         return;
-    //         //     }
+                    // insert(lower_elem: u32, insert_elem: u32, upper_elem: u32)
 
-    //         //     // If the next Cons cdr is larger than the insert cdr:
-    //         //     if (insert_car_raw < next_cons_view.car) {
+                    proof {
+                        token_tuple = current_locked_cons.instance.insert(
+                            current_cons.car, 
+                            insert_car, 
+                            next_cons_view.car, 
+                            map_token
+                        );
+                        updated_cons_token = token_tuple.0.get();
+                        new_cons_token = token_tuple.1.get();
+                    }
 
-    //         //         // Then we insert inbetween Cons and Cons
-    //         //         let mut current_cons = current_locked_cons.cell.take(Tracked(current_cons_perm.borrow_mut()));
+                    let locked_cons = LockedCons::new(
+                        insert_car, 
+                        Some(next_locked_cons.clone()), 
+                        current_locked_cons.instance.clone(),
+                        Tracked(new_cons_token),
+                    );
 
-    //         //         let tracked token_tuple;
-    //         //         let tracked updated_cons_token;
-    //         //         let tracked new_cons_token;
+                    current_cons.cdr = Some(Arc::new(locked_cons));
 
-    //         //         proof {
-    //         //             token_tuple = current_locked_cons.instance.borrow().insert(
-    //         //                 current_locked_cons.view_car(), 
-    //         //                 insert_car, 
-    //         //                 current_cons.map_token.value(), 
-    //         //                 current_cons.map_token.get()
-    //         //             );
-    //         //             updated_cons_token = token_tuple.0.get();
-    //         //             new_cons_token = token_tuple.1.get();
-    //         //         }
+                    current_locked_cons.cons_cell.put(Tracked(&mut cons_perm), current_cons);
 
-    //         //         let locked_cons = LockedCons::new(
-    //         //             insert_car_raw, 
-    //         //             Tracked(new_cons_token), 
-    //         //             Some(next_locked_cons.clone()), 
-    //         //             current_locked_cons.instance.clone()
-    //         //         );
+                    current_locked_cons.release_lock(Tracked(ConsPermAndToken { cons_perm, map_token: updated_cons_token }));
+                    return;
+                }
 
-    //         //         current_cons.cdr = Some(Arc::new(locked_cons));
-    //         //         current_cons.map_token = Tracked(updated_cons_token);
+                // Otherwise, we give up the previous lock, and loop again
+                current_locked_cons.release_lock(Tracked(ConsPermAndToken { cons_perm, map_token }));
 
-    //         //         current_locked_cons.cell.put(Tracked(current_cons_perm.borrow_mut()), current_cons);
-
-    //         //         current_locked_cons.release_lock(current_cons_perm);
-    //         //         next_locked_cons.release_lock(next_cons_perm);
-    //         //         return;
-    //         //     }
-
-    //         //     // Otherwise, we give up the previous lock, and loop again
-    //         //     current_locked_cons.release_lock(current_cons_perm);
-
-    //         //     current_locked_cons = next_locked_cons;
-    //         //     current_cons_perm = next_cons_perm;
-    //         // }
-    //     }
-    // }
+                current_locked_cons = next_locked_cons;
+                cpat = Tracked(ConsPermAndToken { cons_perm: next_cons_perm, map_token: next_map_token });
+            }
+        }
+    }
 
     // fn delete(self: Arc<Self>, mut current_cons_perm: Tracked<PointsTo<Cons>>, delete_car_raw: u32)
     //     requires

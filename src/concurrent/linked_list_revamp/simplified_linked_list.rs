@@ -173,8 +173,10 @@ tokenized_state_machine!{
         transition!{
             delete(lower_elem: u32, delete_elem: u32)
             {   
-                remove list_representation -= [delete_elem => let option_elem];
+                require(lower_elem < delete_elem);
+
                 remove list_representation -= [lower_elem => Some(delete_elem)];
+                remove list_representation -= [delete_elem => let option_elem];
                 add list_representation += [lower_elem => option_elem];
             }
         }
@@ -482,7 +484,7 @@ impl LockedNil {
         // We can release the dummy node lock.
         self.release_lock(nil_perm_and_token);
         // // and begin our traversal:
-        // first_locked_cons.delete(first_cons_perm, delete_car_raw);
+        first_locked_cons.delete(delete_car, Tracked(ConsPermAndToken { cons_perm, map_token }));
     }
 }
 
@@ -676,8 +678,8 @@ impl LockedCons {
                     )
                 ),
                 cpat.cons_perm.value().car < insert_car
-            // decreases
-            //     insert_car - cpat.cons_perm.value().car
+            decreases
+                insert_car - cpat.cons_perm.value().car
         {
             let tracked ConsPermAndToken { cons_perm, map_token } = cpat.get();
             let mut current_cons_view = current_locked_cons.cons_cell.borrow(Tracked(&mut cons_perm));
@@ -776,134 +778,108 @@ impl LockedCons {
         }
     }
 
-    // fn delete(self: Arc<Self>, mut current_cons_perm: Tracked<PointsTo<Cons>>, delete_car_raw: u32)
-    //     requires
-    //         self.wf(),
-    //         current_cons_perm.is_init(),
-    //         current_cons_perm.id() == self.cell.id(),
-    //         NodeData::CAR(current_cons_perm.value().car) == self.view_car,
-    //         current_cons_perm.value().map_token@.instance_id() == self.instance@.id(),
-    //         current_cons_perm.value().map_token@.key() == NodeData::CAR(current_cons_perm.value().car),
-    //         (current_cons_perm.value().map_token@.value().is_none() <==> current_cons_perm.value().cdr.is_none()), 
-    //         (current_cons_perm.value().map_token@.value().is_some() ==> 
-    //             (
-    //                 current_cons_perm.value().cdr.unwrap().wf() &&
-    //                 current_cons_perm.value().cdr.unwrap().view_instance() == self.instance &&
-    //                 current_cons_perm.value().cdr.unwrap().view_car() > NodeData::CAR(current_cons_perm.value().car) &&
-    //                 current_cons_perm.value().cdr.unwrap().view_car() == current_cons_perm.value().map_token@.value().unwrap()
-    //             )
-    //         ),
-    //         current_cons_perm.value().car < delete_car_raw
-    //     ensures
-    //         self.wf()
-    // {
-    //     let delete_car = NodeData::CAR(delete_car_raw);
-    //     let mut current_locked_cons = self;
-    //     loop 
-    //         invariant
-    //             self.wf(),
-    //             current_locked_cons.wf(),
-    //             current_cons_perm.is_init(),
-    //             current_cons_perm.id() == current_locked_cons.cell.id(),
-    //             NodeData::CAR(current_cons_perm.value().car) == current_locked_cons.view_car,
-    //             current_cons_perm.value().map_token@.instance_id() == current_locked_cons.instance@.id(),
-    //             current_cons_perm.value().map_token@.key() == NodeData::CAR(current_cons_perm.value().car),
-    //             (current_cons_perm.value().map_token@.value().is_none() <==> current_cons_perm.value().cdr.is_none()), 
-    //             (current_cons_perm.value().map_token@.value().is_some() ==> 
-    //                 (
-    //                     current_cons_perm.value().cdr.unwrap().wf() &&
-    //                     current_cons_perm.value().cdr.unwrap().view_instance() == current_locked_cons.instance &&
-    //                     current_cons_perm.value().cdr.unwrap().view_car() > NodeData::CAR(current_cons_perm.value().car) &&
-    //                     current_cons_perm.value().cdr.unwrap().view_car() == current_cons_perm.value().map_token@.value().unwrap()
-    //                 )
-    //             ),
-    //             current_cons_perm.value().car < delete_car_raw,
-    //             delete_car == NodeData::CAR(delete_car_raw)
-    //         decreases
-    //             delete_car_raw - current_cons_perm.value().car
-    //     {
-    //         let mut current_cons_view = current_locked_cons.cell.borrow(Tracked(current_cons_perm.borrow_mut()));
+    fn delete(self: Arc<Self>, delete_car: u32, mut cpat: Tracked<ConsPermAndToken>)
+        requires
+            self.wf(),
+            cpat.cons_perm.is_init(),
+            cpat.cons_perm.id() == self.cons_cell.id(),
+            cpat.map_token.instance_id() == self.instance.id(),
+            cpat.map_token.key() == self.view_car,
+            cpat.cons_perm.value().car == self.view_car,
+            (cpat.map_token.value().is_none() <==> cpat.cons_perm.value().cdr.is_none()) ,
+            (cpat.map_token.value().is_some() ==> 
+                (
+                    cpat.cons_perm.value().cdr.unwrap().wf() &&
+                    cpat.cons_perm.value().cdr.unwrap().view_instance() == self.instance &&
+                    cpat.cons_perm.value().cdr.unwrap().view_car() == cpat.map_token.value().unwrap() &&
+                    cpat.cons_perm.value().cdr.unwrap().view_car() > cpat.cons_perm.value().car
+                )
+            ),
+            cpat.cons_perm.value().car < delete_car
+        ensures
+            self.wf()
+    {
+        let mut current_locked_cons = self;
+        loop 
+            invariant
+                self.wf(),
+                current_locked_cons.wf(),
+                current_locked_cons.instance == self.instance,
+                cpat.cons_perm.is_init(),
+                cpat.cons_perm.id() == current_locked_cons.cons_cell.id(),
+                cpat.map_token.instance_id() == current_locked_cons.instance.id(),
+                cpat.map_token.key() == current_locked_cons.view_car,
+                cpat.cons_perm.value().car == current_locked_cons.view_car,
+                (cpat.map_token.value().is_none() <==> cpat.cons_perm.value().cdr.is_none()) ,
+                (cpat.map_token.value().is_some() ==> 
+                    (
+                        cpat.cons_perm.value().cdr.unwrap().wf() &&
+                        cpat.cons_perm.value().cdr.unwrap().view_instance() == current_locked_cons.instance &&
+                        cpat.cons_perm.value().cdr.unwrap().view_car() == cpat.map_token.value().unwrap() &&
+                        cpat.cons_perm.value().cdr.unwrap().view_car() > cpat.cons_perm.value().car
+                    )
+                ),
+                cpat.cons_perm.value().car < delete_car
+            // decreases
+            //     delete_car_raw - current_cons_perm.value().car
+        {
+            let tracked ConsPermAndToken { cons_perm, map_token } = cpat.get();
+            let mut current_cons_view = current_locked_cons.cons_cell.borrow(Tracked(&mut cons_perm));
 
-    //         // If there is no next LockedCons, then we have reached the tail.
-    //         // If we have not deleted by now, then we are done - no tokens exist ==> no nodes exist
-    //         if (current_cons_view.cdr.is_none()) {
-    //             proof {
-    //                 current_locked_cons.instance.delete_successful_car_not_in_list(
-    //                     current_locked_cons.view_car(), 
-    //                     delete_car, 
-    //                     current_cons_view.map_token.value(), 
-    //                     current_cons_view.map_token.borrow()
-    //                 );
-    //             }
-    //             current_locked_cons.release_lock(current_cons_perm);
-    //             return;
-    //         } 
-    //         // Otherwise, there is another LockedCons
-    //         else {
-    //             // Acquire the permissions to access the Cons:
-    //             let next_locked_cons = current_cons_view.cdr.as_ref().unwrap().clone();
-    //             let mut next_cons_perm = next_locked_cons.acquire_lock();
-    //             let next_cons_view = next_locked_cons.cell.borrow(Tracked(next_cons_perm.borrow_mut()));
+            // If there is no next LockedCons, then we have reached the tail.
+            // If we have not deleted by now, then we are done - no tokens exist ==> no nodes exist
+            if (current_cons_view.cdr.is_none()) {
+                current_locked_cons.release_lock(Tracked(ConsPermAndToken { cons_perm, map_token }));
+                return;
+            } 
+            // Otherwise, there is another LockedCons
+            else {
+                // Acquire the permissions to access the Cons:
+                let next_locked_cons = current_cons_view.cdr.as_ref().unwrap().clone();
+                let mut next_cpat = next_locked_cons.acquire_lock();
+                let tracked ConsPermAndToken { cons_perm: next_cons_perm, map_token: next_map_token } = next_cpat.get();
+                let next_cons_view = next_locked_cons.cons_cell.borrow(Tracked(&mut next_cons_perm));
 
-    //             // If the next car is larger than our delete, then we have:
-    //             // lower_car < delete_car < upper_car
-    //             // Which means that no node exist with value delete_car.
-    //             // We are done - no tokens exist ==> no nodes exist
-    //             if (delete_car_raw < next_cons_view.car) {
-    //                 proof {
-    //                     current_locked_cons.instance.delete_successful_car_not_in_list(
-    //                         current_locked_cons.view_car(), 
-    //                         delete_car, 
-    //                         current_cons_view.map_token.value(), 
-    //                         current_cons_view.map_token.borrow()
-    //                     );
-    //                 }
-    //                 current_locked_cons.release_lock(current_cons_perm);
-    //                 next_locked_cons.release_lock(next_cons_perm);
-    //                 return;
-    //             }
+                // If the next car is larger than our delete, then we have:
+                // lower_car < delete_car < upper_car
+                // Which means that no node exist with value delete_car.
+                // We are done - no tokens exist ==> no nodes exist
+                if (delete_car < next_cons_view.car) {
+                    current_locked_cons.release_lock(Tracked(ConsPermAndToken { cons_perm, map_token }));
+                    next_locked_cons.release_lock(Tracked(ConsPermAndToken { cons_perm: next_cons_perm, map_token: next_map_token }));
+                    return;
+                }
 
-    //             // Check if we are deleting the first LockedCons:
-    //             if (delete_car_raw == next_cons_view.car) {
-    //                 let mut current_cons = current_locked_cons.cell.take(Tracked(current_cons_perm.borrow_mut()));
-    //                 let mut next_cons = next_locked_cons.cell.take(Tracked(next_cons_perm.borrow_mut()));
+                // Check if we are deleting this LockedCons:
+                if (delete_car == next_cons_view.car) {
+                    let mut current_cons = current_locked_cons.cons_cell.take(Tracked(&mut cons_perm));
+                    let mut next_cons = next_locked_cons.cons_cell.take(Tracked(&mut next_cons_perm));
 
-    //                 let tracked updated_current_cons_token;
+                    let tracked updated_map_token;
 
-    //                 proof {
-    //                     updated_current_cons_token = current_locked_cons.instance.borrow().delete(
-    //                         current_locked_cons.view_car(), 
-    //                         delete_car, 
-    //                         next_cons.map_token.value(), 
-    //                         current_cons.map_token.get(),
-    //                         next_cons.map_token.get()
-    //                     );
-    //                 }
+                    proof {
+                        updated_map_token = current_locked_cons.instance.delete(
+                            current_cons.car, 
+                            delete_car, 
+                            map_token,
+                            next_map_token
+                        );
+                    }
 
-    //                 current_cons.map_token = Tracked(updated_current_cons_token);
-    //                 current_cons.cdr = next_cons.cdr;
+                    current_cons.cdr = next_cons.cdr;
 
-    //                 proof {
-    //                     current_locked_cons.instance.delete_successful_car_not_in_list(
-    //                         current_locked_cons.view_car(), 
-    //                         delete_car, 
-    //                         current_cons.map_token.value(), 
-    //                         current_cons.map_token.borrow()
-    //                     );
-    //                 }
+                    current_locked_cons.cons_cell.put(Tracked(&mut cons_perm), current_cons);
+                    current_locked_cons.release_lock(Tracked(ConsPermAndToken { cons_perm, map_token: updated_map_token }));
+                    return;
+                }
 
-    //                 current_locked_cons.cell.put(Tracked(current_cons_perm.borrow_mut()), current_cons);
-    //                 current_locked_cons.release_lock(current_cons_perm);
-    //                 return;
-    //             }
-
-    //             // Otherwise, we give up the previous lock, and loop again
-    //             current_locked_cons.release_lock(current_cons_perm);
-    //             current_locked_cons = next_locked_cons;
-    //             current_cons_perm = next_cons_perm;
-    //         }
-    //     }
-    // }
+                // Otherwise, we give up the previous lock, and loop again
+                current_locked_cons.release_lock(Tracked(ConsPermAndToken { cons_perm, map_token }));
+                current_locked_cons = next_locked_cons;
+                cpat = Tracked(ConsPermAndToken { cons_perm: next_cons_perm, map_token: next_map_token });
+            }
+        }
+    }
 }
 
 fn main() {

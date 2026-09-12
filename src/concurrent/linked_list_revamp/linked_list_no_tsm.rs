@@ -224,6 +224,18 @@ impl LockedNil {
         // // and begin our traversal:
         first_locked_cons.delete(delete_car, cons_perm);
     }
+
+    #[verifier::external_body]
+    pub fn print_list(self: Arc<Self>) {
+        let mut nil_perm = self.acquire_lock();
+        let nil_view = self.nil_cell.borrow(Tracked(&mut nil_perm));
+
+        let first_locked_cons = nil_view.cdr.as_ref().unwrap().clone();
+        let mut cons_perm = first_locked_cons.acquire_lock();
+
+        self.release_lock(nil_perm);
+        first_locked_cons.print_list(cons_perm);
+    }
 }
 
 pub struct Cons {
@@ -457,8 +469,8 @@ impl LockedCons {
                         cons_perm.value().car < cons_perm.value().cdr.unwrap().view_car()
                 ),
                 cons_perm.value().car < delete_car
-            // decreases
-            //     delete_car_raw - current_cons_perm.value().car
+            decreases
+                delete_car - cons_perm.value().car
         {
             let mut current_cons_view = current_locked_cons.cons_cell.borrow(Tracked(&mut cons_perm));
 
@@ -504,6 +516,70 @@ impl LockedCons {
                 cons_perm = next_cons_perm;
             }
         }
+    }
+
+    #[verifier::external_body]
+    pub fn print_list(self: Arc<Self>, mut cons_perm: Tracked<PointsTo<Cons>>) {
+        let mut current_locked_cons = self;
+        loop {
+            let mut current_cons_view = current_locked_cons.cons_cell.borrow(Tracked(&mut cons_perm));
+            println!("{}", current_cons_view.car);
+
+            if (current_cons_view.cdr.is_none()) {
+                current_locked_cons.release_lock(cons_perm);
+                return;
+            } 
+
+            let next_locked_cons = current_cons_view.cdr.as_ref().unwrap().clone();
+            let mut next_cons_perm = next_locked_cons.acquire_lock();
+            let next_cons_view = next_locked_cons.cons_cell.borrow(Tracked(&mut next_cons_perm));
+
+            current_locked_cons.release_lock(cons_perm);
+            current_locked_cons = next_locked_cons;
+            cons_perm = next_cons_perm;
+        }
+    }
+}
+
+
+pub struct LinkedList {
+    pub locked_nil: Arc<LockedNil>,
+}
+
+impl LinkedList {
+    pub closed spec fn wf(&self) -> bool
+    {
+        self.locked_nil.wf()
+    }
+
+    pub fn new() -> (linked_list : Arc<Self>)
+        ensures
+            linked_list.wf(),
+    {
+        Arc::new(Self { locked_nil: Arc::new(LockedNil::new()) })
+    }
+
+    pub fn insert(&self, elem: u32)
+        requires
+            self.wf()
+        ensures
+            self.wf()
+    {
+        self.locked_nil.clone().insert(elem)
+    }
+
+    pub fn delete(&self, elem: u32)
+        requires
+            self.wf()
+        ensures
+            self.wf()
+    {
+        self.locked_nil.clone().delete(elem)
+    }
+
+    #[verifier::external_body]
+    pub fn print_list(&self) {
+        self.locked_nil.clone().print_list();
     }
 }
 

@@ -2,17 +2,15 @@
 use std::sync::Arc;
 use verus_builtin::*;
 use verus_builtin_macros::*;
-use verus_state_machines_macros::tokenized_state_machine;
-use vstd::{atomic_ghost::*, pervasive::*, prelude::*, simple_pptr::*};
 
-mod stack;
-use stack::{PoppedElemAndWitness, TreiberStack};
+mod treiber_stack;
+use treiber_stack::{TreiberStack};
 
 verus! {
 
 #[verifier::external_body]
-fn print_pop(peaw: PoppedElemAndWitness) {
-    match peaw.elem {
+fn print_pop(option_elem: Option<u32>) {
+    match option_elem {
         Some(elem) => println!("{}", elem),
         None => println!("None"),
     }
@@ -159,10 +157,10 @@ fn multithreaded_with_possible_empty_stack_test(treiber_stack: Arc<TreiberStack>
         invariant
             treiber_stack.wf(),
     {
-        let x = treiber_stack.pop();
-        match x.elem {
+        let option_pop = treiber_stack.pop();
+        match option_pop {
             None => break,
-            Some(_) => print_pop(x),
+            Some(_) => print_pop(option_pop),
         }
     }
 }

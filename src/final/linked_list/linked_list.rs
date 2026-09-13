@@ -7,6 +7,10 @@ use vstd::{
     atomic_ghost::*, cell::pcell_maybe_uninit::*, modes::*, pervasive::*, prelude::*, thread::*,
 };
 
+//
+// Verified with Verus version: 0.2026.08.30.b432e82
+//
+
 verus! {
 
 tokenized_state_machine!{
@@ -436,6 +440,7 @@ impl LockedNil {
             self.release_lock(nil_perm_and_token);
             return;
         }
+
         // The list is not empty:
          else {
             // Acquire the lock for the nil node, and view the data inside (without taking):
@@ -452,8 +457,8 @@ impl LockedNil {
                 first_locked_node.release_lock(first_node_perm_and_token);
                 return;
             }
-            // If the first Node's elem is larger than what we are inserting, then we insert here:
 
+            // If the first Node's elem is larger than what we are inserting, then we insert here:
             if (insert_elem < first_node_view.elem) {
                 let tracked map_token;
 
@@ -483,8 +488,8 @@ impl LockedNil {
                 first_locked_node.release_lock(first_node_perm_and_token);
                 return;
             }
-            // We will insert after the first Node, we may release the Nil lock:
 
+            // We will insert after the first Node, we may release the Nil lock:
             self.release_lock(nil_perm_and_token);
 
             // Any insert from here onwards will not involve nil -
@@ -508,8 +513,8 @@ impl LockedNil {
             self.release_lock(nil_perm_and_token);
             return;
         }
-        // Acquire the lock for the first node, and view the data inside (without taking)
 
+        // Acquire the lock for the first node, and view the data inside (without taking)
         let first_locked_node = nil_view.next.as_ref().unwrap().clone();
         let mut first_node_perm_and_token = first_locked_node.acquire_lock();
         let tracked NodePermAndToken { node_perm, map_token } = first_node_perm_and_token.get();
@@ -521,9 +526,9 @@ impl LockedNil {
             self.release_lock(nil_perm_and_token);
             first_locked_node.release_lock(Tracked(NodePermAndToken { node_perm, map_token }));
             return;
-        }  //
-        // Check if we are deleting the first LockedNode:
+        }
 
+        // Check if we are deleting the first LockedNode:
         if (delete_elem == first_node_view.elem) {
             let mut nil = self.nil_cell.take(Tracked(&mut nil_perm_and_token.nil_perm));
             let mut first_node = first_locked_node.node_cell.take(Tracked(&mut node_perm));
@@ -751,7 +756,7 @@ impl LockedNode {
                 Tracked(&mut node_perm),
             );
 
-            // If there is no next LockedNode, then we must insert at the tail after a Node
+            // If there is no next LockedNode, then we must insert at the tail
             if (current_node_view.next.is_none()) {
                 let mut old_tail_node = current_locked_node.node_cell.take(Tracked(&mut node_perm));
 
@@ -784,6 +789,7 @@ impl LockedNode {
                 );
                 return;
             }
+
             // Otherwise, there is another LockedNode
              else {
                 // Acquire the permissions to access the Node:
@@ -799,7 +805,8 @@ impl LockedNode {
 
                 // If a Node with this value already exists:
                 if (insert_elem == next_node_view.elem) {
-                    // Return early and do nothing - the Node exists.
+
+                    // Return early without inserting
                     current_locked_node.release_lock(
                         Tracked(NodePermAndToken { node_perm, map_token }),
                     );
@@ -813,9 +820,10 @@ impl LockedNode {
                     );
                     return;
                 }
-                // If the next Node next is larger than the insert next:
 
+                // If the next Node's elem larger than what we are inserting:
                 if (insert_elem < next_node_view.elem) {
+
                     // Then we insert inbetween Node and Node
                     let mut current_node = current_locked_node.node_cell.take(
                         Tracked(&mut node_perm),
@@ -824,8 +832,6 @@ impl LockedNode {
                     let tracked token_tuple;
                     let tracked updated_node_token;
                     let tracked new_node_token;
-
-                    // insert(lower_elem: u32, insert_elem: u32, upper_elem: u32)
 
                     proof {
                         token_tuple =
@@ -863,12 +869,11 @@ impl LockedNode {
                     );
                     return;
                 }
-                // Otherwise, we give up the previous lock, and loop again
 
+                // Otherwise, we give up the previous lock, and loop again
                 current_locked_node.release_lock(
                     Tracked(NodePermAndToken { node_perm, map_token }),
                 );
-
                 current_locked_node = next_locked_node;
                 npat =
                 Tracked(NodePermAndToken { node_perm: next_node_perm, map_token: next_map_token });
@@ -921,14 +926,15 @@ impl LockedNode {
                 Tracked(&mut node_perm),
             );
 
-            // If there is no next LockedNode, then we have reached the tail.
-            // If we have not deleted by now, then we are done - no tokens exist ==> no nodes exist
+            // If there is no next LockedNode, then we have reached the tail
+            // The delete terminates as no node has the value
             if (current_node_view.next.is_none()) {
                 current_locked_node.release_lock(
                     Tracked(NodePermAndToken { node_perm, map_token }),
                 );
                 return;
             }
+
             // Otherwise, there is another LockedNode
              else {
                 // Acquire the permissions to access the Node:
@@ -945,7 +951,6 @@ impl LockedNode {
                 // If the next elem is larger than our delete, then we have:
                 // lower_elem < delete_elem < upper_elem
                 // Which means that no node exist with value delete_elem.
-                // We are done - no tokens exist ==> no nodes exist
                 if (delete_elem < next_node_view.elem) {
                     current_locked_node.release_lock(
                         Tracked(NodePermAndToken { node_perm, map_token }),
@@ -960,8 +965,8 @@ impl LockedNode {
                     );
                     return;
                 }
-                // Check if we are deleting this LockedNode:
 
+                // If we are deleting the node we are on:
                 if (delete_elem == next_node_view.elem) {
                     let mut current_node = current_locked_node.node_cell.take(
                         Tracked(&mut node_perm),
@@ -990,8 +995,8 @@ impl LockedNode {
                     );
                     return;
                 }
-                // Otherwise, we give up the previous lock, and loop again
 
+                // Otherwise, we give up the previous lock, and loop again
                 current_locked_node.release_lock(
                     Tracked(NodePermAndToken { node_perm, map_token }),
                 );

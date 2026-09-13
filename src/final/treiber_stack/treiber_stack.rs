@@ -5,6 +5,10 @@ use verus_builtin_macros::*;
 use verus_state_machines_macros::tokenized_state_machine;
 use vstd::{atomic_ghost::*, pervasive::*, prelude::*, simple_pptr::*};
 
+//
+// Verified with Verus version: 0.2026.08.30.b432e82
+//
+
 verus! {
 
 global layout StackCell is size == 16;

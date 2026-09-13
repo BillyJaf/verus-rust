@@ -6,6 +6,10 @@ use verus_builtin_macros::*;
 mod treiber_stack;
 use treiber_stack::TreiberStack;
 
+//
+// Verified with Verus version: 0.2026.08.30.b432e82
+//
+
 verus! {
 
 #[verifier::external_body]

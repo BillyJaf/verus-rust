@@ -2,8 +2,8 @@ use std::sync::Arc;
 use verus_builtin::*;
 use verus_builtin_macros::*;
 
-mod linked_list;
-use linked_list::{LinkedList};
+mod linked_list_non_linear;
+use linked_list_non_linear::{LinkedList};
 
 verus! {
 
@@ -69,7 +69,7 @@ fn simple_delete_test(linked_list: Arc<LinkedList>)
     linked_list.insert(5);
     linked_list.delete(2);
     linked_list.delete(4);
-    linked_list.print_list();
+    linked_list.print_list()
 }
 
 fn simple_delete_test_duplicate_deletes(linked_list: Arc<LinkedList>)
@@ -89,7 +89,7 @@ fn simple_delete_test_duplicate_deletes(linked_list: Arc<LinkedList>)
     linked_list.delete(4);
     linked_list.delete(2);
     linked_list.delete(4);
-    linked_list.print_list();
+    linked_list.print_list()
 }
 
 fn multithreaded_double_inserts(linked_list: Arc<LinkedList>)

@@ -3,7 +3,7 @@ use verus_builtin::*;
 use verus_builtin_macros::*;
 
 mod linked_list;
-use linked_list::{LinkedList};
+use linked_list::LinkedList;
 
 verus! {
 
@@ -106,69 +106,8 @@ fn multithreaded_double_inserts(linked_list: Arc<LinkedList>)
     let mut i = 0;
     while i < num_interations
         invariant
-            linked_list.wf()
-        decreases
-            num_interations - i
-    {
-        let thread_linked_list = linked_list.clone();
-        join_handles.push(
-            vstd::thread::spawn(
-                move ||
-                    {
-                        thread_linked_list.insert(i);
-                    },
-            ),
-        );
-        i = i + 1;
-    }
-
-    for handle in join_handles.into_iter() {
-        let _ = handle.join();
-    }
-
-    let mut join_handles = Vec::new();
-    let mut i = 0;
-    while i < num_interations
-        invariant
-            linked_list.wf()
-        decreases
-            num_interations - i
-    {
-        let thread_linked_list = linked_list.clone();
-        join_handles.push(
-            vstd::thread::spawn(
-                move ||
-                    {
-                        thread_linked_list.insert(i);
-                    },
-            ),
-        );
-        i = i + 1;
-    }
-
-    for handle in join_handles.into_iter() {
-        let _ = handle.join();
-    }
-
-    linked_list.print_list();
-}
-
-fn multithreaded_insert_delete(linked_list: Arc<LinkedList>)
-    requires
-        linked_list.wf()
-    ensures
-        linked_list.wf()
-{
-    print_header("MULTI THREADED INSERT-DELETE TEST");
-    print_description("Expect 100, 101, ..., 109 - in that order.");
-    let mut join_handles = Vec::new();
-    let num_interations = 10;
-    let mut i = 0;
-    while i < num_interations
-        invariant
-            linked_list.wf()
-        decreases
-            num_interations - i
+            linked_list.wf(),
+        decreases num_interations - i,
     {
         let thread_linked_list = linked_list.clone();
         join_handles.push(
@@ -191,9 +130,66 @@ fn multithreaded_insert_delete(linked_list: Arc<LinkedList>)
     while i < num_interations
         invariant
             linked_list.wf(),
-            i <= num_interations <= u32::MAX - 100
-        decreases
-            num_interations - i
+        decreases num_interations - i,
+    {
+        let thread_linked_list = linked_list.clone();
+        join_handles.push(
+            vstd::thread::spawn(
+                move ||
+                    {
+                        thread_linked_list.insert(i);
+                    },
+            ),
+        );
+        i = i + 1;
+    }
+
+    for handle in join_handles.into_iter() {
+        let _ = handle.join();
+    }
+
+    linked_list.print_list();
+}
+
+fn multithreaded_insert_delete(linked_list: Arc<LinkedList>)
+    requires
+        linked_list.wf(),
+    ensures
+        linked_list.wf(),
+{
+    print_header("MULTI THREADED INSERT-DELETE TEST");
+    print_description("Expect 100, 101, ..., 109 - in that order.");
+    let mut join_handles = Vec::new();
+    let num_interations = 10;
+    let mut i = 0;
+    while i < num_interations
+        invariant
+            linked_list.wf(),
+        decreases num_interations - i,
+    {
+        let thread_linked_list = linked_list.clone();
+        join_handles.push(
+            vstd::thread::spawn(
+                move ||
+                    {
+                        thread_linked_list.insert(i);
+                    },
+            ),
+        );
+        i = i + 1;
+    }
+
+    for handle in join_handles.into_iter() {
+        let _ = handle.join();
+    }
+
+    let mut join_handles = Vec::new();
+    let mut i = 0;
+    while i < num_interations
+        invariant
+            linked_list.wf(),
+            i <= num_interations <= u32::MAX - 100,
+        decreases num_interations - i,
     {
         let thread_linked_list = linked_list.clone();
         join_handles.push(
@@ -217,7 +213,7 @@ fn multithreaded_insert_delete(linked_list: Arc<LinkedList>)
 
 pub fn main() {
     let linked_list = LinkedList::new();
-    
+
     simple_insert_test(linked_list.clone());
     simple_insert_test_duplicate_inserts(linked_list.clone());
     simple_delete_test(linked_list.clone());

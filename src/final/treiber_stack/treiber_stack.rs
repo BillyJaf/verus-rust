@@ -310,7 +310,7 @@ impl TreiberStack {
             current_stack_addresses,
             popped_addresses,
             witnesses,
-            addresses
+            addresses,
         };
 
         assert(current_stack_addresses.value().first() == base_address);
@@ -420,7 +420,9 @@ impl TreiberStack {
             }
 
             let permissioned_pointer = PPtr::<StackCell>::from_addr(top_address);
-            let top_stack_cell = permissioned_pointer.read(Tracked(stack_cell_permission_reference));
+            let top_stack_cell = permissioned_pointer.read(
+                Tracked(stack_cell_permission_reference),
+            );
 
             let new_stack_head_address_result =
                 atomic_with_ghost!{

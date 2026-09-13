@@ -4,7 +4,7 @@ use verus_builtin::*;
 use verus_builtin_macros::*;
 
 mod treiber_stack;
-use treiber_stack::{TreiberStack};
+use treiber_stack::TreiberStack;
 
 verus! {
 
